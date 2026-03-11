@@ -1,1 +1,1 @@
-# light_pollution
+# 빛 공해(light_pollution)
