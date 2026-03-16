@@ -1,9 +1,13 @@
 ﻿// AI 분석 흐름 및 페이지 전환
 const sampleImages = [
-  { url: "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=1200&q=80", name: "도심 전광판" },
-  { url: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80", name: "가로등 거리" },
-  { url: "https://images.unsplash.com/photo-1494256997604-768d1f608cac?auto=format&fit=crop&w=1200&q=80", name: "쇼핑가 네온" },
-  { url: "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?auto=format&fit=crop&w=1200&q=80", name: "야간 간판" }
+  { url: "/static/assets/images/samples/night_sign_01.jpg", name: "야간 간판 실사 1" },
+  { url: "/static/assets/images/samples/night_sign_02.jpg", name: "전광판 실사 2" },
+  { url: "/static/assets/images/samples/night_sign_03.jpg", name: "네온 간판 실사 3" },
+  { url: "/static/assets/images/samples/night_sign_04.jpg", name: "도심 광고판 실사 4" },
+  { url: "/static/assets/images/samples/night_sign_05.jpg", name: "가로등/간판 실사 5" },
+  { url: "/static/assets/images/samples/night_sign_06.jpg", name: "상점 간판 실사 6" },
+  { url: "/static/assets/images/samples/night_sign_07.jpg", name: "LED 전광판 실사 7" },
+  { url: "/static/assets/images/samples/night_sign_08.jpg", name: "야간 조명 간판 실사 8" }
 ];
 
 const CONTACT_INFO = {
@@ -13,7 +17,7 @@ const CONTACT_INFO = {
   address: "동아대학교 승학캠퍼스"
 };
 
-const PAGE_VERSION = "20260316-3";
+const PAGE_VERSION = "20260316-10";
 
 function withVersion(path) {
   // Flask 라우트 URL로 변환 (analysis.html → /analysis)
@@ -223,6 +227,25 @@ async function callApiAnalyze(imageData) {
   }
 }
 
+async function resolveImageDataForApi(imageRef) {
+  if (!imageRef) return imageRef;
+  if (String(imageRef).startsWith("data:image")) return imageRef;
+  try {
+    const response = await fetch(imageRef);
+    if (!response.ok) throw new Error(`image fetch failed: ${response.status}`);
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = reject;
+      fr.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn("이미지 URL을 data URL로 변환 실패", err);
+    return imageRef;
+  }
+}
+
 function simulateApiAnalysis(imageData) {
   return analyzeLightImage(imageData).then((analysis) => {
     const risk = calculateRiskScore(analysis.objects, analysis.avgBrightness, analysis.gamma);
@@ -273,6 +296,7 @@ function mainPageInit() {
 function analysisPageInit() {
   syncFooterContact();
   const { data, file, size, time } = readSessionImage();
+  ["light_detected", "light_risk", "light_confidence", "light_riskSummary", "light_gamma", "light_modelStatus"].forEach((k) => sessionStorage.removeItem(k));
   const imageEl = document.getElementById("analysisImage");
   const fileNameEl = document.getElementById("fileName");
   const uploadTimeEl = document.getElementById("uploadTime");
@@ -310,8 +334,12 @@ function analysisPageInit() {
     if (currentIndex >= steps.length - 1) {
       clearInterval(interval);
       if (statusText) statusText.textContent = "AI 분석이 완료되었습니다. 결과 페이지로 이동합니다.";
-      callApiAnalyze(data).then((apiResult) => {
-        const objectNames = apiResult.detected.map((o) => `${o.name}(${o.brightness}cd)`).join(", ");
+      resolveImageDataForApi(data).then((apiInput) => callApiAnalyze(apiInput)).then((apiResult) => {
+        const objectNames = apiResult.detected.map((o) => {
+          const unit = o.lawUnit || (o.type === "가로등" ? "lux" : "cd/m²");
+          const measured = o.measuredValue ?? (unit === "lux" ? o.illuminanceLux : o.luminanceCdM2) ?? o.brightness;
+          return `${o.name}(${Math.round(measured)} ${unit})`;
+        }).join(", ");
         const detectedObjectsEl = document.getElementById("detectedObjects");
         const detectedRiskEl = document.getElementById("detectedRisk");
         if (detectedObjectsEl) detectedObjectsEl.textContent = objectNames || "없음";
@@ -322,8 +350,11 @@ function analysisPageInit() {
         sessionStorage.setItem("light_riskSummary", apiResult.riskSummary);
         sessionStorage.setItem("light_gamma", apiResult.gamma || "1.8");
         sessionStorage.setItem("light_modelStatus", apiResult.model || "모델 상태 없음");
+      }).catch((err) => {
+        console.error("분석 결과 저장 실패", err);
+      }).finally(() => {
+        setTimeout(() => { window.location.href = withVersion("result.html"); }, 250);
       });
-      setTimeout(() => { window.location.href = withVersion("result.html"); }, 700);
       return;
     }
     currentIndex += 1;
@@ -401,7 +432,10 @@ function resultPageInit() {
       box.style.left = `${item.box.x}%`;
       box.style.width = `${item.box.width}%`;
       box.style.height = `${item.box.height}%`;
-      box.innerHTML = `<strong style="font-size:.72rem; display:block; margin-bottom:2px;">${item.name}</strong>${item.riskLevel} ${item.brightness}cd<br/><small>${item.compliance || '미표시'} [기준 ${item.lawThreshold || '-'}]</small>`;
+      const lawUnit = item.lawUnit || (item.type === "가로등" ? "lux" : "cd/m²");
+      const measured = item.measuredValue ?? (lawUnit === "lux" ? item.illuminanceLux : item.luminanceCdM2) ?? item.brightness;
+      const threshold = item.lawThreshold ?? item.lawThresholdCdM2 ?? "-";
+      box.innerHTML = `<strong style="font-size:.72rem; display:block; margin-bottom:2px;">${item.name}</strong>${item.riskLevel} ${Math.round(measured)} ${lawUnit}<br/><small>${item.compliance || '미표시'} [기준 ${threshold} ${lawUnit}]</small>`;
       overlayContainer.appendChild(box);
     });
   }

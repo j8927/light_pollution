@@ -37,6 +37,125 @@ COCO_TO_KR = {
 }
 
 
+def normalize_zone(zone_value):
+    z = (zone_value or '').strip().lower()
+    if z in ('residential', '주거', '주거지역'):
+        return '주거지역'
+    if z in ('commercial', '상업', '상업지역'):
+        return '상업지역'
+    return '상업지역'
+
+
+def estimate_luminance_cd_m2(luminance_0_255):
+    # 이미지 휘도(0~255) -> 현장 휘도(cd/m^2) 근사 변환
+    # 실제 계측기값과 다를 수 있으며, 운영 시 캘리브레이션 권장
+    norm = float(np.clip(luminance_0_255 / 255.0, 0.0, 1.0))
+    return float((norm ** 1.15) * 1200.0)
+
+
+def estimate_illuminance_lux(luminance_0_255):
+    # 이미지 밝기(0~255) -> 조도(lux) 근사 변환
+    norm = float(np.clip(luminance_0_255 / 255.0, 0.0, 1.0))
+    return float((norm ** 1.05) * 60.0)
+
+
+def analyze_region_metrics(cropped):
+    # 휘도(Y) = 0.2126R + 0.7152G + 0.0722B (광감도 기준)
+    r = cropped[:, :, 0].astype(np.float32)
+    g = cropped[:, :, 1].astype(np.float32)
+    b = cropped[:, :, 2].astype(np.float32)
+    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    brightness = float(np.mean(lum))
+    hsv = cv2.cvtColor(cropped, cv2.COLOR_RGB2HSV)
+    s = hsv[:, :, 1].astype(np.float32) / 255
+    saturation = float(np.mean(s))
+    gamma = float(np.clip(1.8 + np.std(lum) / 64.0, 1.0, 3.5))
+    luminance_cd_m2 = estimate_luminance_cd_m2(brightness)
+    illuminance_lux = estimate_illuminance_lux(brightness)
+    return brightness, luminance_cd_m2, illuminance_lux, saturation, gamma
+
+
+def detect_light_objects_cv(img, zone):
+    # YOLO가 놓친 경우를 대비한 자동 탐지 fallback (수동 아님)
+    h, w = img.shape[:2]
+    lum = (0.2126 * img[:, :, 0].astype(np.float32)
+           + 0.7152 * img[:, :, 1].astype(np.float32)
+           + 0.0722 * img[:, :, 2].astype(np.float32))
+    gray = np.clip(lum, 0, 255).astype(np.uint8)
+    blur = cv2.GaussianBlur(gray, (7, 7), 0)
+
+    # 이미지마다 다른 밝기 조건을 맞추기 위한 동적 임계값
+    th = max(160, int(np.percentile(blur, 92)))
+    _, mask = cv2.threshold(blur, th, 255, cv2.THRESH_BINARY)
+
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+    detected = []
+    min_area = (h * w) * 0.0008
+
+    for c in contours[:10]:
+        area = cv2.contourArea(c)
+        if area < min_area:
+            continue
+        x, y, bw, bh = cv2.boundingRect(c)
+        if bw < 8 or bh < 8:
+            continue
+
+        cropped = img[max(0, y):min(h, y + bh), max(0, x):min(w, x + bw)]
+        if cropped.size == 0:
+            continue
+
+        brightness, luminance_cd_m2, illuminance_lux, saturation, gamma = analyze_region_metrics(cropped)
+        aspect = bw / max(1, bh)
+
+        if aspect >= 1.8:
+            cat = '간판'
+            name = 'cv_signboard'
+        elif y < h * 0.45 and aspect <= 0.9:
+            cat = '가로등'
+            name = 'cv_streetlight'
+        else:
+            cat = '조명'
+            name = 'cv_light'
+
+        risk_score, risk_level, compliance, threshold, law_unit, measured_value = compute_law_risk(
+            luminance_cd_m2,
+            illuminance_lux,
+            saturation,
+            gamma,
+            cat,
+            zone
+        )
+        detected.append({
+            'name': name,
+            'type': cat,
+            'brightness': int(brightness),
+            'luminanceCdM2': round(luminance_cd_m2, 1),
+            'illuminanceLux': round(illuminance_lux, 1),
+            'measuredValue': round(measured_value, 1),
+            'saturation': round(saturation, 2),
+            'gamma': round(gamma, 2),
+            'riskLevel': risk_level,
+            'compliance': compliance,
+            'lawUnit': law_unit,
+            'lawThreshold': threshold,
+            'lawThresholdCdM2': threshold,
+            'box': {
+                'x': int(max(0, x / w * 100)),
+                'y': int(max(0, y / h * 100)),
+                'width': int(max(5, bw / w * 100)),
+                'height': int(max(5, bh / h * 100))
+            }
+        })
+
+    return detected[:5]
+
+
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -61,36 +180,52 @@ def decode_base64_image(data_url):
     return np.array(image)
 
 
-def compute_law_risk(brightness, saturation, gamma, category):
-    # 실제 야간 간판/조명 규제 초안 기반 유사 계산
-    # (실제 법규 단위값은 측정 장비/거리에 따라 다름, 여기서는 이미지 기반 활성화 예시)
-    # - brightness: 0-255 (이미지 픽셀 밝기) -> 가중치
+def compute_law_risk(luminance_cd_m2, illuminance_lux, saturation, gamma, category, zone):
+    # 휘도(cd/m^2) 중심 법규 판단
+    # - luminance_cd_m2: 추정 휘도(cd/m^2)
     # - saturation: 0-1
     # - gamma: 1.0-3.5
 
-    # 법규 임계치 예시
-    legal_thresholds = {
-        '간판': {'lux': 120, 'score': 45},
-        '조명': {'lux': 90, 'score': 35},
-        '가로등': {'lux': 100, 'score': 38},
-        '구조물': {'lux': 80, 'score': 30}
+    # 간판/전광판은 휘도(cd/m²), 가로등은 조도(lux) 기준
+    cd_thresholds = {
+        '상업지역': {'간판': 800, '조명': 650, '구조물': 450},
+        '주거지역': {'간판': 300, '조명': 220, '구조물': 160}
     }
+    lux_thresholds = {
+        '상업지역': {'가로등': 30},
+        '주거지역': {'가로등': 20}
+    }
+    current_zone = normalize_zone(zone)
+
+    if category == '가로등':
+        threshold = lux_thresholds[current_zone]['가로등']
+        measured_value = illuminance_lux
+        law_unit = 'lux'
+    else:
+        threshold = cd_thresholds.get(current_zone, cd_thresholds['상업지역']).get(category, cd_thresholds[current_zone]['조명'])
+        measured_value = luminance_cd_m2
+        law_unit = 'cd/m²'
+
     base = 20
-    # 밝기는 normalized luminance
-    norm_brightness = brightness / 255.0
-    base += norm_brightness * 40
-    base += saturation * 20
-    base += max(0, gamma - 1.5) * 15
+    norm_value = float(np.clip(measured_value / max(1.0, threshold), 0.0, 3.0))
+    base += saturation * 8
+    base += max(0, gamma - 1.8) * 8
 
-    if category in legal_thresholds:
-        base += legal_thresholds[category]['score'] * (norm_brightness > 0.45)
+    if category in ('간판', '조명', '가로등', '구조물'):
+        base += 4
     elif category == '사람' or category == '차량':
-        base += 15
+        base += 8
 
-    # 법규 기준 적합 여부
-    threshold = legal_thresholds.get(category, {'lux': 100})['lux']
-    # 간단히 이미지 기준으로 luminance 기준 비교
-    compliance = '준수' if brightness < threshold * 2 else '위반'  # 이미지 밝기 to lux 근사
+    # 휘도 기준 적합 여부
+    compliance = '준수' if measured_value <= threshold else '위반'
+
+    if compliance == '준수':
+        # 기준 이하면 위험 상한 제한 (과대 판정 방지)
+        base += min(12, norm_value * 12)
+        base = min(base, 58)
+    else:
+        exceed_ratio = min(2.0, (measured_value - threshold) / max(1.0, threshold))
+        base = 60 + min(35, exceed_ratio * 40) + saturation * 6 + max(0, gamma - 1.8) * 6
 
     if base >= 85:
         level = '고위험'
@@ -99,13 +234,14 @@ def compute_law_risk(brightness, saturation, gamma, category):
     else:
         level = '관찰'
 
-    return min(100, int(base)), level, compliance, threshold
+    return min(100, int(base)), level, compliance, threshold, law_unit, measured_value
 
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze_api():
     data = request.get_json(silent=True) or {}
     image_data = data.get('image') or data.get('imageData')
+    zone = normalize_zone(data.get('zone') or data.get('regionType') or '상업지역')
     if not image_data:
         return jsonify({'status': 'error', 'message': 'No image data provided.'}), 400
 
@@ -116,6 +252,7 @@ def analyze_api():
 
     h, w = img.shape[:2]
     detected = []
+    detection_source = 'none'
 
     if MODEL is not None:
         try:
@@ -131,25 +268,30 @@ def analyze_api():
                 cropped = img[max(y1, 0):min(y2, h), max(x1, 0):min(x2, w)]
                 if cropped.size == 0:
                     continue
-                # 휘도(Y) = 0.2126R + 0.7152G + 0.0722B (광감도 기준)
-                r, g, b = cropped[:, :, 0].astype(np.float32), cropped[:, :, 1].astype(np.float32), cropped[:, :, 2].astype(np.float32)
-                lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
-                brightness = float(np.mean(lum))
-                hsv = cv2.cvtColor(cropped, cv2.COLOR_RGB2HSV)
-                s = hsv[:, :, 1].astype(np.float32) / 255
-                saturation = float(np.mean(s))
-                gamma = float(np.clip(1.8 + np.std(lum) / 64.0, 1.0, 3.5))
+                brightness, luminance_cd_m2, illuminance_lux, saturation, gamma = analyze_region_metrics(cropped)
                 cat = COCO_TO_KR.get(label, '조명')
-                risk_score, risk_level, compliance, threshold = compute_law_risk(brightness, saturation, gamma, cat)
+                risk_score, risk_level, compliance, threshold, law_unit, measured_value = compute_law_risk(
+                    luminance_cd_m2,
+                    illuminance_lux,
+                    saturation,
+                    gamma,
+                    cat,
+                    zone
+                )
                 detected.append({
                     'name': f'{label}',
                     'type': cat,
                     'brightness': int(brightness),
+                    'luminanceCdM2': round(luminance_cd_m2, 1),
+                    'illuminanceLux': round(illuminance_lux, 1),
+                    'measuredValue': round(measured_value, 1),
                     'saturation': round(saturation, 2),
                     'gamma': round(gamma, 2),
                     'riskLevel': risk_level,
                     'compliance': compliance,
+                    'lawUnit': law_unit,
                     'lawThreshold': threshold,
+                    'lawThresholdCdM2': threshold,
                     'box': {
                         'x': int(max(0, x1 / w * 100)),
                         'y': int(max(0, y1 / h * 100)),
@@ -157,32 +299,62 @@ def analyze_api():
                         'height': int(max(5, (y2 - y1) / h * 100))
                     }
                 })
+            # 사람/차량 등 비광원 객체만 탐지되는 경우를 제외하고 광원 관련 객체 우선 사용
+            detected = [d for d in detected if d['type'] in ('간판', '가로등', '조명') and d['brightness'] >= 60]
+            if detected:
+                detection_source = 'yolo'
         except Exception as e:
             detected = []
-    
+
+    # YOLO 결과가 없으면 OpenCV 기반 자동 탐지 fallback 수행
+    if not detected:
+        detected = detect_light_objects_cv(img, zone)
+        if detected:
+            detection_source = 'cv-fallback'
+
     if not detected:
         # 객체가 아예 검출되지 않으면 기본 관찰 low risk
         brightness = float(np.mean(0.2126 * img[:, :, 0].astype(np.float32)
                                    + 0.7152 * img[:, :, 1].astype(np.float32)
                                    + 0.0722 * img[:, :, 2].astype(np.float32)))
         gamma = 1.8
-        risk_score, risk_level, compliance, threshold = 20, '관찰', '준수', 90
+        base_cd = estimate_luminance_cd_m2(brightness)
+        base_lux = estimate_illuminance_lux(brightness)
+        default_threshold = 800 if zone == '상업지역' else 300
+        risk_score, risk_level, compliance, threshold = 20, '관찰', '준수', default_threshold
+        detection_source = 'none'
         detected = [{
             'name': '객체 미검출',
             'type': '조명',
             'brightness': int(brightness),
+            'luminanceCdM2': round(base_cd, 1),
+            'illuminanceLux': round(base_lux, 1),
+            'measuredValue': round(base_cd, 1),
             'saturation': 0.2,
             'gamma': round(gamma, 2),
             'riskLevel': risk_level,
             'compliance': compliance,
+            'lawUnit': 'cd/m²',
             'lawThreshold': threshold,
+            'lawThresholdCdM2': threshold,
             'box': {'x': 10, 'y': 10, 'width': 80, 'height': 80}
         }]
 
     avg_brightness = float(np.mean(cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)))
     gamma = float(np.mean([obj.get('gamma', 1.8) for obj in detected]))
-    risk_score = int(np.mean([compute_law_risk(obj['brightness'], obj['saturation'], obj['gamma'], obj['type'])[0] for obj in detected]))
+    risk_score = int(np.mean([
+        compute_law_risk(
+            obj.get('luminanceCdM2', estimate_luminance_cd_m2(obj.get('brightness', 0))),
+            obj.get('illuminanceLux', estimate_illuminance_lux(obj.get('brightness', 0))),
+            obj.get('saturation', 0.0),
+            obj.get('gamma', 1.8),
+            obj.get('type', '조명'),
+            zone
+        )[0]
+        for obj in detected
+    ]))
     risk_level = '고위험' if risk_score >= 80 else '주의' if risk_score >= 60 else '관찰'
+    avg_luminance_cd_m2 = float(np.mean([obj.get('luminanceCdM2', estimate_luminance_cd_m2(obj.get('brightness', 0))) for obj in detected]))
 
     return jsonify({
         'status': 'success',
@@ -192,8 +364,11 @@ def analyze_api():
         'detected': detected,
         'riskSummary': f'{risk_level} 위험 ({risk_score}%)',
         'avgBrightness': int(avg_brightness),
+        'avgLuminanceCdM2': round(avg_luminance_cd_m2, 1),
+        'zone': zone,
         'gamma': round(gamma, 2),
-        'model': MODEL_STATUS
+        'model': MODEL_STATUS,
+        'detectionSource': detection_source
     })
 
 

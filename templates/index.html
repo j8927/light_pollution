@@ -98,8 +98,9 @@
       <div class="modal-content">
         <div class="modal-header"><h3>법규 정보 요약</h3><button id="closePolicyBtn" class="btn btn-secondary">닫기</button></div>
         <ul>
-          <li>야간 간판 조명은 지역별 평균 휘도 기준을 초과하지 않아야 합니다.</li>
-          <li>주거지역의 상업 간판 조명은 300cd/㎡ 이하 권장.</li>
+          <li>전광판/간판은 지역별 휘도(cd/m²) 기준을 초과하지 않아야 합니다.</li>
+          <li>주거지역 간판은 300 cd/m² 이하, 상업지역 간판은 800 cd/m² 이하 기준을 권장합니다.</li>
+          <li>가로등은 조도(lux) 기준으로 관리하며 주거지역 20 lux, 상업지역 30 lux 이하를 권장합니다.</li>
           <li>자체 소등 기능을 적용하여 비점등 시간(22:00~06:00)을 준수해야 합니다.</li>
           <li>감시 카메라 등을 통한 지속 모니터링이 권장됩니다.</li>
         </ul>
@@ -116,6 +117,6 @@
       <div class="container copyright"> 2026 AI 빛 공해 분석. All rights reserved.</div>
     </footer>
   </div>
-  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260316-3" defer></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260316-10" defer></script>
 </body>
 </html>
