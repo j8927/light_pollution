@@ -1,0 +1,44 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>분석 진행 - 빛 공해 법규 위반 탐지 시스템</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <div class="header-inner container">
+        <div class="logo-row"><div class="logo-icon">💡</div><div><div class="logo-text">빛 공해 법규 위반 탐지 시스템</div><div class="logo-sub">AI 기반 빛 공해 분석 서비스</div></div></div>
+        <nav class="main-nav"><a href="{{ url_for('home') }}">홈</a><a href="{{ url_for('home') }}#policy">법규 정보</a><a href="{{ url_for('home') }}#contact">문의</a></nav>
+      </div>
+    </header>
+    <main class="container analysis-wrap">
+      <div class="center-title"><p class="eyebrow">분석</p><h1>분석 진행 중</h1><p class="subtitle">AI가 이미지 데이터를 분석하는 중입니다. 잠시만 기다려 주세요.</p></div>
+      <div class="analysis-grid">
+        <section class="card analysis-card">
+          <div class="card-head"><h3>업로드 이미지</h3></div>
+          <div class="image-preview-wrap"><img id="analysisImage" src="" alt="업로드 이미지" /></div>
+          <div class="meta-list"><div><strong>파일명</strong><span id="fileName">샘플이미지.jpg</span></div><div><strong>업로드 시간</strong><span id="uploadTime">00:00</span></div><div><strong>크기</strong><span id="fileSize">-</span></div></div>
+        </section>
+        <section class="card analysis-card">
+          <div class="card-head"><h3>AI 분석 단계</h3></div>
+          <div id="stepList" class="step-list"></div>
+          <div class="progress-row"><div class="progress-label"><span>진행률</span><span id="progressPercent">0%</span></div><div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div></div>
+          <p id="statusText" class="status-text">이미지 불러오는 중...</p>
+          <div class="meta-list" style="margin-top:10px; gap:8px; font-size:.95rem;"><div><strong>탐지된 객체</strong><span id="detectedObjects">-</span></div><div><strong>예상 위험도</strong><span id="detectedRisk">분석 중...</span></div></div>
+        </section>
+      </div>
+      <div class="analysis-actions"><button class="btn btn-secondary" id="reuploadBtn">다시 업로드</button><button class="btn btn-danger" id="cancelBtn">분석 취소</button></div>
+    </main>
+    <footer class="site-footer">
+      <div class="container footer-grid"><div><div class="logo-row"><div class="logo-icon">💡</div><div>빛 공해 법규 위반 탐지 시스템</div></div><p>AI 기반 빛 공해 분석 서비스로 야간 환경을 안전하게 관리합니다.</p></div><div><p class="footer-title">바로가기</p><a href="{{ url_for('home') }}#hero">서비스 소개</a><a href="{{ url_for('home') }}#upload">분석하기</a></div><div><p class="footer-title">문의</p><p>2143412@donga.ac.kr</p><p>010-8603-8271</p><p>조태승</p><p>동아대학교 승학캠퍼스</p></div></div><div class="container copyright"> 2026 AI 빛 공해 분석. All rights reserved.</div>
+    </footer>
+  </div>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260316-3" defer></script>
+</body>
+</html>

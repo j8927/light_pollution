@@ -1,0 +1,121 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>빛 공해 법규 위반 탐지 시스템</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <div class="header-inner container">
+        <div class="logo-row">
+          <div class="logo-icon">💡</div>
+          <div>
+            <div class="logo-text">빛 공해 법규 위반 탐지 시스템</div>
+            <div class="logo-sub">AI 기반 빛 공해 분석 서비스</div>
+          </div>
+        </div>
+        <nav class="main-nav">
+          <a href="#hero">서비스 소개</a>
+          <a href="#upload">분석하기</a>
+          <a href="#policy">법규 정보</a>
+          <a href="#contact">문의</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section id="hero" class="hero-section">
+        <div class="container hero-grid">
+          <div class="hero-text">
+            <p class="eyebrow">AI 기반 빛 공해 분석</p>
+            <h1>사진 한 장으로 간판/조명의 빛 공해 위험도를 분석합니다</h1>
+            <p class="subtitle">AI가 간판과 조명을 탐지하고 밝기 강도를 분석하여 법규 위반 가능성을 시각적으로 제공합니다.</p>
+            <div class="hero-actions">
+              <label class="btn btn-primary" for="uploadInput">이미지 업로드</label>
+              <button type="button" class="btn btn-secondary" id="sampleBtn">예시 이미지로 체험하기</button>
+            </div>
+          </div>
+          <div class="hero-card">
+            <div class="hero-card-content">
+              <div class="hero-card-title">빠른 AI 분석</div>
+              <p>간판조명 이미지를 업로드하면 즉시 위험도를 평가합니다.</p>
+              <div class="hero-pill">공공 + AI 분석</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="upload" class="section container">
+        <div class="section-head"><div><p class="eyebrow">빠른 분석</p><h2>업로드 안내</h2></div></div>
+        <div class="upload-box">
+          <div class="upload-meta">
+            <div class="upload-icon">📷</div>
+            <div>
+              <h3>업로드 안내</h3>
+              <ul>
+                <li>JPG / PNG 파일 업로드 가능</li>
+                <li>야간 촬영 이미지 권장</li>
+                <li>간판 또는 조명이 잘 보이도록 촬영</li>
+                <li>흐리거나 너무 어두운 사진은 정확도가 낮을 수 있음</li>
+              </ul>
+            </div>
+          </div>
+          <div class="upload-actions">
+            <input type="file" id="uploadInput" accept="image/jpeg,image/png" hidden />
+            <button class="btn btn-primary" id="uploadBtn">파일 선택</button>
+            <p class="upload-note">또는 파일을 여기로 드래그하세요.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section container">
+        <div class="section-head"><div><p class="eyebrow">기능</p><h2>주요 기능</h2></div></div>
+        <div class="feature-grid">
+          <article class="feature-card"><div class="feature-icon">🔍</div><h4>객체 탐지</h4><p>간판과 조명을 자동으로 감지합니다.</p></article>
+          <article class="feature-card"><div class="feature-icon">💡</div><h4>밝기 분석</h4><p>고휘도 영역과 밝기 수치를 계산합니다.</p></article>
+          <article class="feature-card"><div class="feature-icon">⚠️</div><h4>위험도 판정</h4><p>법규 기준을 비교하여 위험도를 분류합니다.</p></article>
+          <article class="feature-card"><div class="feature-icon">📊</div><h4>결과 시각화</h4><p>분석 결과를 카드와 그래프로 제공합니다.</p></article>
+        </div>
+      </section>
+
+      <section class="section dim-section container">
+        <div class="dim-card"><div><p class="eyebrow">정보</p><h2>빛 공해란?</h2><p>인공조명으로 인해 생활환경과 생태계에 영향을 주는 현상입니다. 간판과 조명 이미지를 기반으로 위험도를 평가합니다.</p></div></div>
+      </section>
+
+      <section id="policy" class="section container">
+        <div class="section-head"><div><p class="eyebrow">법규 정보</p><h2>관련 법규 개요</h2></div><button class="btn btn-secondary" id="openPolicyBtn" style="height:36px; font-size:.85rem;">법규 상세 보기</button></div>
+        <div class="card" style="padding:16px; margin-top:10px; border:1px solid #dbe3f2;">
+          <p>국토교통부 및 환경부에서 제시하는 경관 조명 기준에 따라 간판 밝기와 광출력 등을 검토합니다. 본 서비스는 예시 데이터와 시각화를 통해 위반 가능성을 제시합니다.</p>
+          <p style="margin-top:8px; font-size:.9rem; color:#4f5f7a;">* 분석 결과는 예시 기준이며, 실제 법규 해석은 담당 기관 확인이 필요합니다.</p>
+        </div>
+      </section>
+    </main>
+
+    <div id="policyModal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header"><h3>법규 정보 요약</h3><button id="closePolicyBtn" class="btn btn-secondary">닫기</button></div>
+        <ul>
+          <li>야간 간판 조명은 지역별 평균 휘도 기준을 초과하지 않아야 합니다.</li>
+          <li>주거지역의 상업 간판 조명은 300cd/㎡ 이하 권장.</li>
+          <li>자체 소등 기능을 적용하여 비점등 시간(22:00~06:00)을 준수해야 합니다.</li>
+          <li>감시 카메라 등을 통한 지속 모니터링이 권장됩니다.</li>
+        </ul>
+      </div>
+    </div>
+    </div>
+
+    <footer id="contact" class="site-footer">
+      <div class="container footer-grid">
+        <div><div class="logo-row"><div class="logo-icon">💡</div><div>빛 공해 법규 위반 탐지 시스템</div></div><p>AI 기반 빛 공해 분석 서비스입니다.</p></div>
+        <div><p class="footer-title">바로가기</p><a href="#hero">서비스 소개</a><a href="#upload">분석하기</a><a href="#policy">법규 정보</a></div>
+          <div><p class="footer-title">문의</p><p>2143412@donga.ac.kr</p><p>010-8603-8271</p><p>조태승</p><p>동아대학교 승학캠퍼스</p></div>
+      </div>
+      <div class="container copyright"> 2026 AI 빛 공해 분석. All rights reserved.</div>
+    </footer>
+  </div>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260316-3" defer></script>
+</body>
+</html>

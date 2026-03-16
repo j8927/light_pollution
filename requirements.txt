@@ -1,0 +1,7 @@
+# Render 배포용 (경량 버전 - AI 모델 없이 웹 UI + JS 로컬 분석)
+Flask==3.0.3
+Flask-Cors==4.0.1
+gunicorn==22.0.0
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+Pillow==10.4.0

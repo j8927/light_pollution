@@ -1,0 +1,10 @@
+# 로컬 전체 실행용 (AI 모델 포함)
+# pip install -r requirements-full.txt
+Flask==3.0.3
+Flask-Cors==4.0.1
+gunicorn==22.0.0
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+Pillow==10.4.0
+torch>=2.0.0
+ultralytics==8.3.36
