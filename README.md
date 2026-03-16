@@ -134,7 +134,56 @@ GitHub, Discord, VS Code, Roboflow, Weights & Biases
 
 
 
-# 4. 참고문헌
+# 4. 로컬 실행 방법 (개인 개발 환경)
+
+## 1) 프로젝트 폴더 이동
+
+```powershell
+cd e:\visual.code\Light_Pollution
+```
+
+## 2) 가상환경 생성 및 활성화
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+```
+
+## 3) 패키지 설치
+
+Render 배포 기준(경량):
+
+```powershell
+pip install -r requirements.txt
+```
+
+로컬 AI 모델까지 포함(전체):
+
+```powershell
+pip install -r requirements-full.txt
+```
+
+## 4) Flask 서버 실행
+
+```powershell
+python backend.py
+```
+
+## 5) 브라우저 접속
+
+- 메인 페이지: http://127.0.0.1:5000/
+- 분석 페이지: http://127.0.0.1:5000/analysis
+- 결과 페이지: http://127.0.0.1:5000/result
+- 상태 API: http://127.0.0.1:5000/api/status
+
+## 6) 확인 체크리스트
+
+- 메인 화면 정상 표시
+- CSS/JS 깨짐 없음
+- 예시 이미지 또는 업로드 후 분석 페이지 이동
+- 결과 페이지 정상 표시
+
+# 5. 참고문헌
 
 인공조명에 의한 빛공해 방지법
 https://www.law.go.kr/법령/인공조명에의한빛공해방지법
