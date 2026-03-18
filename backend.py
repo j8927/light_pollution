@@ -36,6 +36,8 @@ COCO_TO_KR = {
     'car': '차량'
 }
 
+DIRECT_LIGHT_CLASSES = {'간판', '가로등', '조명', '구조물', '사람', '차량'}
+
 
 def normalize_zone(zone_value):
     z = (zone_value or '').strip().lower()
@@ -59,6 +61,47 @@ def estimate_illuminance_lux(luminance_0_255):
     return float((norm ** 1.05) * 60.0)
 
 
+def _white_balance(img):
+    """Gray World 화이트 밸런스 보정 — 색온도 편향 제거"""
+    result = img.astype(np.float32)
+    avg_r = np.mean(result[:, :, 0])
+    avg_g = np.mean(result[:, :, 1])
+    avg_b = np.mean(result[:, :, 2])
+    avg_gray = (avg_r + avg_g + avg_b) / 3.0
+    if avg_r > 1:
+        result[:, :, 0] = np.clip(result[:, :, 0] * (avg_gray / avg_r), 0, 255)
+    if avg_g > 1:
+        result[:, :, 1] = np.clip(result[:, :, 1] * (avg_gray / avg_g), 0, 255)
+    if avg_b > 1:
+        result[:, :, 2] = np.clip(result[:, :, 2] * (avg_gray / avg_b), 0, 255)
+    return result.astype(np.uint8)
+
+
+def preprocess_image(img):
+    """
+    야간 이미지 탐지용 전처리 파이프라인 (측정값 산출에는 원본 사용):
+      1. 화이트 밸런스 보정 (Gray World)
+      2. 양방향 필터 노이즈 제거 (엣지 보존)
+      3. CLAHE 대비 강화 (LAB 색공간 L채널만 적용)
+    """
+    # 1. 화이트 밸런스
+    img_wb = _white_balance(img)
+
+    # 2. 양방향 필터 — 엣지(간판 테두리)는 유지하면서 배경 노이즈 제거
+    img_bgr = cv2.cvtColor(img_wb, cv2.COLOR_RGB2BGR)
+    denoised = cv2.bilateralFilter(img_bgr, d=9, sigmaColor=75, sigmaSpace=75)
+
+    # 3. CLAHE — 어두운 영역 대비 강화 (과다 증폭 방지: clipLimit=2.0)
+    lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
+    l, a, b_ch = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_eq = clahe.apply(l)
+    lab_eq = cv2.merge([l_eq, a, b_ch])
+    result_bgr = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+
+    return cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB)
+
+
 def analyze_region_metrics(cropped):
     # 휘도(Y) = 0.2126R + 0.7152G + 0.0722B (광감도 기준)
     r = cropped[:, :, 0].astype(np.float32)
@@ -75,12 +118,31 @@ def analyze_region_metrics(cropped):
     return brightness, luminance_cd_m2, illuminance_lux, saturation, gamma
 
 
-def detect_light_objects_cv(img, zone):
+def classify_by_geometry(x1, y1, x2, y2, img_h, img_w):
+    """
+    YOLO가 탐지한 바운딩박스의 기하학적 특성으로 객체 종류를 분류.
+    - 가로 길이 > 세로 × 1.8  → 간판 (가로형 직사각형)
+    - 이미지 상단 45% + 세로형(aspect ≤ 0.9) → 가로등 (수직 기둥)
+    - 그 외                   → 조명
+    """
+    bw = max(1, x2 - x1)
+    bh = max(1, y2 - y1)
+    aspect = bw / bh
+    if aspect >= 1.8:
+        return '간판'
+    if y1 < img_h * 0.45 and aspect <= 0.9:
+        return '가로등'
+    return '조명'
+
+
+def detect_light_objects_cv(img_proc, img_orig, zone):
     # YOLO가 놓친 경우를 대비한 자동 탐지 fallback (수동 아님)
-    h, w = img.shape[:2]
-    lum = (0.2126 * img[:, :, 0].astype(np.float32)
-           + 0.7152 * img[:, :, 1].astype(np.float32)
-           + 0.0722 * img[:, :, 2].astype(np.float32))
+    # img_proc: 전처리된 이미지 (컨투어 탐지용)
+    # img_orig: 원본 이미지 (휘도/측정값 산출용)
+    h, w = img_proc.shape[:2]
+    lum = (0.2126 * img_proc[:, :, 0].astype(np.float32)
+           + 0.7152 * img_proc[:, :, 1].astype(np.float32)
+           + 0.0722 * img_proc[:, :, 2].astype(np.float32))
     gray = np.clip(lum, 0, 255).astype(np.uint8)
     blur = cv2.GaussianBlur(gray, (7, 7), 0)
 
@@ -106,7 +168,8 @@ def detect_light_objects_cv(img, zone):
         if bw < 8 or bh < 8:
             continue
 
-        cropped = img[max(0, y):min(h, y + bh), max(0, x):min(w, x + bw)]
+        # 측정값은 원본 이미지에서 추출 (전처리로 인한 휘도 왜곡 방지)
+        cropped = img_orig[max(0, y):min(h, y + bh), max(0, x):min(w, x + bw)]
         if cropped.size == 0:
             continue
 
@@ -250,13 +313,15 @@ def analyze_api():
     except Exception as e:
         return jsonify({'status': 'error', 'message': f'Image decode failed: {e}'}), 400
 
+    # 탐지 정확도 향상을 위한 전처리 (원본은 측정값 산출에 유지)
+    img_proc = preprocess_image(img)
     h, w = img.shape[:2]
     detected = []
     detection_source = 'none'
 
     if MODEL is not None:
         try:
-            results = MODEL(img, imgsz=640, conf=0.25)
+            results = MODEL(img_proc, imgsz=640, conf=0.25)
             out = results[0]
             boxes = out.boxes
             names = out.names
@@ -265,11 +330,19 @@ def analyze_api():
                 cls_id = int(b.cls[0])
                 conf = float(b.conf[0])
                 label = names.get(cls_id, f'class_{cls_id}')
+                # YOLO 박스 좌표는 전처리 이미지 기준이나 크기 동일 → 원본에서 crop
                 cropped = img[max(y1, 0):min(y2, h), max(x1, 0):min(x2, w)]
                 if cropped.size == 0:
                     continue
                 brightness, luminance_cd_m2, illuminance_lux, saturation, gamma = analyze_region_metrics(cropped)
-                cat = COCO_TO_KR.get(label, '조명')
+                # 재학습한 커스텀 모델이 한국어 클래스를 직접 반환하면 그대로 사용한다.
+                # 단일 클래스(light_object)나 COCO 미매핑 클래스만 기하학 fallback으로 분류한다.
+                if label in DIRECT_LIGHT_CLASSES:
+                    cat = label
+                elif label in COCO_TO_KR:
+                    cat = COCO_TO_KR[label]
+                else:
+                    cat = classify_by_geometry(x1, y1, x2, y2, h, w)
                 risk_score, risk_level, compliance, threshold, law_unit, measured_value = compute_law_risk(
                     luminance_cd_m2,
                     illuminance_lux,
@@ -308,7 +381,7 @@ def analyze_api():
 
     # YOLO 결과가 없으면 OpenCV 기반 자동 탐지 fallback 수행
     if not detected:
-        detected = detect_light_objects_cv(img, zone)
+        detected = detect_light_objects_cv(img_proc, img, zone)
         if detected:
             detection_source = 'cv-fallback'
 

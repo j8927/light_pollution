@@ -11,12 +11,14 @@ def ensure_data_config(data_dir, out_path="data/light_pollution.yaml"):
         raise FileNotFoundError(
             f"데이터 폴더가 올바르지 않습니다. \n준비 순서:\n 1) {data_dir}/train/images, {data_dir}/train/labels\n 2) {data_dir}/val/images, {data_dir}/val/labels"
         )
+    # 클래스 3개: 간판(cd/m² 기준), 가로등(lux 기준), 조명(cd/m² 기준)
+    # 라벨 파일의 class_id: 0=간판, 1=가로등, 2=조명
     data_cfg = {
         'path': data_dir,
         'train': 'train/images',
         'val': 'val/images',
-        'nc': 1,
-        'names': ['light_object']
+        'nc': 3,
+        'names': ['간판', '가로등', '조명']
     }
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, 'w', encoding='utf-8') as f:
@@ -55,7 +57,7 @@ def main():
         name='light_pollution',
         exist_ok=True,
         plots=False,
-        save=False,
+        save=True,
         verbose=False,
     )
     import glob
