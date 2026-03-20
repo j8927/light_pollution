@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 3
+names: ['light_signboard', 'lighting', 'streetlight']
+
+roboflow:
+  workspace: s-workspace-kzkvy
+  project: light_pollution
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/s-workspace-kzkvy/light_pollution/dataset/2

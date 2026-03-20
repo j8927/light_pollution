@@ -3,5 +3,9 @@ __pycache__/
 *.pt
 *.pyc
 runs/
-data/
+data/images/train/
+data/images/val/
+data/images/test/
+data/images_collected/
+data/images_backup_before_roboflow_20260319/
 *.log
