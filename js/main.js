@@ -11,10 +11,12 @@ const sampleImages = [
 ];
 
 const CONTACT_INFO = {
-  email: "2143412@donga.ac.kr",
-  phone: "010-8603-8271",
-  leader: "조태승 (대표)",
-  members: ["곽승우", "김동규", "김승주"],
+  leader: { name: "조태승 (팀장)", email: "2143412@donga.ac.kr", phone: "010-8603-8271" },
+  members: [
+    { name: "곽승우", email: "2353660@donga.ac.kr" },
+    { name: "김동규", email: "2353695@donga.ac.kr" },
+    { name: "김승주", email: "2353716@donga.ac.kr" }
+  ],
   address: "동아대학교 승학캠퍼스"
 };
 
@@ -45,10 +47,9 @@ function syncFooterContact() {
   // Keep footer contact fixed even if a stale HTML copy is loaded.
   contactContainer.innerHTML = [
     '<p class="footer-title">문의</p>',
-    `<p>${CONTACT_INFO.email}</p>`,
-    `<p>${CONTACT_INFO.phone}</p>`,
-    `<p>${CONTACT_INFO.leader}</p>`,
-    ...CONTACT_INFO.members.map(m => `<p>${m}</p>`),
+    `<p>${CONTACT_INFO.leader.name}: ${CONTACT_INFO.leader.email}</p>`,
+    `<p>${CONTACT_INFO.leader.phone}</p>`,
+    ...CONTACT_INFO.members.map(m => `<p>${m.name}: ${m.email}</p>`),
     `<p>${CONTACT_INFO.address}</p>`
   ].join("");
 }
