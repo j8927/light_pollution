@@ -95,7 +95,7 @@ a{color:inherit; text-decoration:none;}
 .summary-right strong{font-size:.9rem; color:#57637f;}
 .result-grid{display:grid; grid-template-columns:1.5fr 1fr; gap:16px; margin-top:12px;}
 .analysis-image-wrap{position:relative; border-radius:12px; overflow:hidden; border:1px solid #dce3f2; background:#f4f7ff; min-height:210px;}
-.analysis-image-wrap img{width:100%; height:240px; object-fit:cover; display:block;}
+.analysis-image-wrap img{width:100%; height:auto; display:block;}
 .overlay{position:absolute; border:2px solid; border-radius:8px; color:#fff; padding:2px 6px; font-size:.75rem; background:rgba(0,0,0,.35);}
 .box-high{border-color:#d63939;}
 .box-medium{border-color:#eb8f2f;}

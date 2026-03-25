@@ -2,7 +2,7 @@ task: detect
 mode: train
 model: yolov8n.pt
 data: data/images\light_pollution.yaml
-epochs: 30
+epochs: 50
 time: null
 patience: 100
 batch: 8
