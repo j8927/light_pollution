@@ -4,12 +4,12 @@ model: yolov8n.pt
 data: data/images\light_pollution.yaml
 epochs: 50
 time: null
-patience: 100
+patience: 0
 batch: 8
 imgsz: 640
 save: true
 save_period: -1
-cache: false
+cache: true
 device: cpu
 workers: 8
 project: models
@@ -17,7 +17,7 @@ name: light_pollution
 exist_ok: true
 pretrained: true
 optimizer: auto
-verbose: false
+verbose: true
 seed: 0
 deterministic: true
 single_cls: false

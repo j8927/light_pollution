@@ -55,6 +55,12 @@ def main():
                 return
 
     os.makedirs(args.output, exist_ok=True)
+
+    import torch
+    device = '0' if torch.cuda.is_available() else 'cpu'
+    workers = min(8, os.cpu_count() or 4)
+    print(f"장치: {device} | CPU 코어: {os.cpu_count()} | Worker: {workers}")
+
     model = YOLO(args.model)
     print('학습 시작: model=', args.model, 'data=', data_cfg)
     result = model.train(
@@ -67,7 +73,11 @@ def main():
         exist_ok=True,
         plots=False,
         save=True,
-        verbose=False,
+        verbose=True,
+        device=device,
+        workers=workers,
+        cache=True,
+        patience=0,
     )
     import glob
     best_candidates = [
