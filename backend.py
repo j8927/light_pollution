@@ -389,7 +389,16 @@ def analyze_api():
         return jsonify({'status': 'error', 'message': f'Image decode failed: {e}'}), 400
 
     # 1. EXIF GPS로 지역 자동 판별
-    gps_coords = extract_gps_from_exif(raw_bytes)
+    # JS에서 canvas 압축 시 EXIF가 제거되므로, 프론트가 미리 추출한 좌표를 우선 사용
+    req_lat = data.get('gpsLat')
+    req_lon = data.get('gpsLon')
+    if req_lat is not None and req_lon is not None:
+        try:
+            gps_coords = (float(req_lat), float(req_lon))
+        except (TypeError, ValueError):
+            gps_coords = None
+    else:
+        gps_coords = extract_gps_from_exif(raw_bytes)
     zone_code = get_zone_from_gps(*gps_coords) if gps_coords else None
 
     # 2. GPS 없을 때 요청 파라미터 확인

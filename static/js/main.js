@@ -51,6 +51,87 @@ function getRandomSampleImage() {
   return sampleImages[Math.floor(Math.random() * sampleImages.length)];
 }
 
+/**
+ * JPEG ArrayBuffer에서 EXIF GPS 좌표를 파싱합니다.
+ * canvas 압축 후 EXIF가 제거되기 때문에, 압축 전 원본 버퍼에서 미리 추출합니다.
+ * @returns {{lat: number, lon: number}|null}
+ */
+function extractGpsFromArrayBuffer(buffer) {
+  try {
+    const dv = new DataView(buffer);
+    // JPEG 시그니처 확인
+    if (dv.getUint16(0) !== 0xFFD8) return null;
+
+    let offset = 2;
+    let tiffStart = -1;
+    // APP1 마커(0xFFE1)에서 EXIF 탐색
+    while (offset + 4 <= dv.byteLength) {
+      if (dv.getUint8(offset) !== 0xFF) break;
+      const marker = dv.getUint8(offset + 1);
+      const segLen = dv.getUint16(offset + 2); // 마커 길이 (길이 바이트 포함)
+      if (marker === 0xE1 && offset + 10 <= dv.byteLength) {
+        // "Exif\0\0" 확인
+        if (dv.getUint8(offset+4)===0x45 && dv.getUint8(offset+5)===0x78 &&
+            dv.getUint8(offset+6)===0x69 && dv.getUint8(offset+7)===0x66) {
+          tiffStart = offset + 10;
+          break;
+        }
+      }
+      offset += 2 + segLen;
+    }
+    if (tiffStart < 0) return null;
+
+    // TIFF 헤더 (byte order + magic)
+    const byteOrder = dv.getUint16(tiffStart);
+    const le = (byteOrder === 0x4949); // 'II' = little endian
+    if (dv.getUint16(tiffStart + 2, le) !== 42) return null;
+
+    const ifd0Offset = dv.getUint32(tiffStart + 4, le);
+    const ifd0Abs = tiffStart + ifd0Offset;
+    const ifd0Count = dv.getUint16(ifd0Abs, le);
+
+    // IFD0에서 GPS IFD 오프셋(tag 0x8825) 탐색
+    let gpsIfdOffset = -1;
+    for (let i = 0; i < ifd0Count; i++) {
+      const e = ifd0Abs + 2 + i * 12;
+      if (dv.getUint16(e, le) === 0x8825) {
+        gpsIfdOffset = dv.getUint32(e + 8, le);
+        break;
+      }
+    }
+    if (gpsIfdOffset < 0) return null;
+
+    const gpsAbs = tiffStart + gpsIfdOffset;
+    const gpsCount = dv.getUint16(gpsAbs, le);
+
+    function readRational3(valOffset) {
+      const abs = tiffStart + valOffset;
+      const d = dv.getUint32(abs,      le) / dv.getUint32(abs + 4,  le);
+      const m = dv.getUint32(abs + 8,  le) / dv.getUint32(abs + 12, le);
+      const s = dv.getUint32(abs + 16, le) / dv.getUint32(abs + 20, le);
+      return d + m / 60 + s / 3600;
+    }
+
+    let latRef = null, lonRef = null, lat = null, lon = null;
+    for (let i = 0; i < gpsCount; i++) {
+      const e = gpsAbs + 2 + i * 12;
+      const tag = dv.getUint16(e, le);
+      const valOff = dv.getUint32(e + 8, le);
+      if (tag === 0x0001) latRef = String.fromCharCode(dv.getUint8(e + 8));
+      else if (tag === 0x0002) lat = readRational3(valOff);
+      else if (tag === 0x0003) lonRef = String.fromCharCode(dv.getUint8(e + 8));
+      else if (tag === 0x0004) lon = readRational3(valOff);
+    }
+
+    if (lat === null || lon === null) return null;
+    if (latRef === 'S') lat = -lat;
+    if (lonRef === 'W') lon = -lon;
+    return { lat, lon };
+  } catch (e) {
+    return null;
+  }
+}
+
 function compressImageToDataUrl(fileData, maxPx, quality) {
   // 이미지를 canvas로 먹심을 가진 쪽 maxPx 이하로 리사이즈 + JPEG 압축
   return new Promise((resolve) => {
@@ -234,10 +315,22 @@ function calculateRiskScore(detectedObjects, avgBrightness, gamma) {
 
 async function callApiAnalyze(imageData) {
   try {
+    const body = { image: imageData };
+    // canvas 압축으로 EXIF가 사라지므로, 업로드 시 미리 추출한 GPS를 같이 전송
+    const rawGps = sessionStorage.getItem("light_rawGps");
+    if (rawGps) {
+      try {
+        const gps = JSON.parse(rawGps);
+        if (gps && typeof gps.lat === "number") {
+          body.gpsLat = gps.lat;
+          body.gpsLon = gps.lon;
+        }
+      } catch (e) { /* 파싱 실패 시 무시 */ }
+    }
     const response = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: imageData })
+      body: JSON.stringify(body)
     });
     if (!response.ok) throw new Error(`API error ${response.status}`);
     const result = await response.json();
@@ -301,20 +394,37 @@ function mainPageInit() {
     uploadInput.addEventListener("change", (event) => {
       const file = event.target.files?.[0];
       if (!file) return;
-      // 동일 파일 재선택 가능하도로 input 초기화
+      // 동일 파일 재선택 가능하도록 input 초기화
       uploadInput.value = "";
-      const reader = new FileReader();
-      reader.onload = () => {
-        // 대용량 사진은 압축 후 저장 (maxPx=1920, quality=0.85)
-        compressImageToDataUrl(reader.result, 1920, 0.85).then((compressed) => {
-          setSessionImage(file.name, compressed, `${Math.round(file.size / 1024)}KB`);
-          window.location.href = withVersion("/analysis");
-        });
+
+      function doCompress() {
+        const reader = new FileReader();
+        reader.onload = () => {
+          // 대용량 사진은 압축 후 저장 (maxPx=1920, quality=0.85)
+          compressImageToDataUrl(reader.result, 1920, 0.85).then((compressed) => {
+            setSessionImage(file.name, compressed, `${Math.round(file.size / 1024)}KB`);
+            window.location.href = withVersion("/analysis");
+          });
+        };
+        reader.onerror = () => {
+          alert("파일을 읽는 중 오류가 발생했습니다. 다른 이미지를 선택해주세요.");
+        };
+        reader.readAsDataURL(file);
+      }
+
+      // canvas 압축 전에 원본 ArrayBuffer에서 GPS EXIF 먼저 추출
+      // (canvas.toDataURL() 은 EXIF를 제거하므로 반드시 원본 단계에서 추출해야 함)
+      const gpsReader = new FileReader();
+      gpsReader.onload = () => {
+        const gps = extractGpsFromArrayBuffer(gpsReader.result);
+        sessionStorage.setItem("light_rawGps", gps ? JSON.stringify(gps) : "");
+        doCompress();
       };
-      reader.onerror = () => {
-        alert("파일을 읽는 중 오류가 발생했습니다. 다른 이미지를 선택해주세요.");
+      gpsReader.onerror = () => {
+        sessionStorage.setItem("light_rawGps", "");
+        doCompress();
       };
-      reader.readAsDataURL(file);
+      gpsReader.readAsArrayBuffer(file);
     });
   }
 
