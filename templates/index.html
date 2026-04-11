@@ -88,8 +88,10 @@
       <section id="policy" class="section container">
         <div class="section-head"><div><p class="eyebrow">법규 정보</p><h2>관련 법규 개요</h2></div><button class="btn btn-secondary" id="openPolicyBtn" style="height:36px; font-size:.85rem;">법규 상세 보기</button></div>
         <div class="card" style="padding:16px; margin-top:10px; border:1px solid #dbe3f2;">
-          <p>국토교통부 및 환경부에서 제시하는 경관 조명 기준에 따라 간판 밝기와 광출력 등을 검토합니다. 본 서비스는 예시 데이터와 시각화를 통해 위반 가능성을 제시합니다.</p>
-          <p style="margin-top:8px; font-size:.9rem; color:#4f5f7a;">* 분석 결과는 예시 기준이며, 실제 법규 해석은 담당 기관 확인이 필요합니다.</p>
+          <p><strong>인공조명에 의한 빛공해 방지법</strong>에 따라 조명환경관리구역(제1종~제4종)별로 광고물·공간조명·장식조명의 휘도·조도 기준을 지켜야 하며,
+          이를 위반할 경우 시정명령으로 개선 명령 후 과태료가 부과됩니다.
+          <strong style="color:#d63939;">과태료: 1차 위반 100만원 이하, 2차 위반 150만원 이하, 3차 이상 200만원 이하</strong></p>
+          <p style="margin-top:8px; font-size:.9rem; color:#4f5f7a;">* 본 서비스는 1차 위반 기준(100만원 이하)을 적용합니다. 실제 법규 해석은 담당 기관 확인이 필요합니다.</p>
         </div>
       </section>
     </main>
@@ -97,13 +99,23 @@
     <div id="policyModal" class="modal hidden">
       <div class="modal-content">
         <div class="modal-header"><h3>법규 정보 요약</h3><button id="closePolicyBtn" class="btn btn-secondary">닫기</button></div>
-        <ul>
-          <li>전광판/간판은 지역별 휘도(cd/m²) 기준을 초과하지 않아야 합니다.</li>
-          <li>주거지역 간판은 300 cd/m² 이하, 상업지역 간판은 800 cd/m² 이하 기준을 권장합니다.</li>
-          <li>가로등은 조도(lux) 기준으로 관리하며 주거지역 20 lux, 상업지역 30 lux 이하를 권장합니다.</li>
-          <li>자체 소등 기능을 적용하여 비점등 시간(22:00~06:00)을 준수해야 합니다.</li>
-          <li>감시 카메라 등을 통한 지속 모니터링이 권장됩니다.</li>
-        </ul>
+        <p style="font-size:.9rem; color:#444; margin-bottom:12px;">출수: 인공조명에 의한 빛공해 방지법 시행령 제8조 · 시행규칙 별표</p>
+        <table style="width:100%; border-collapse:collapse; font-size:.85rem; margin-bottom:14px;">
+          <tr style="background:#f0f4fb;"><th style="padding:8px 10px; border:1px solid #dde4f0; text-align:left;">조명환경관리구역</th><th style="padding:8px 10px; border:1px solid #dde4f0;">공간조명·가로등 (조도 최대)</th><th style="padding:8px 10px; border:1px solid #dde4f0;">광고물·간판 (휘도 최대)</th><th style="padding:8px 10px; border:1px solid #dde4f0;">장식조명·조명 (휘도 평균/최대)</th></tr>
+          <tr><td style="padding:7px 10px; border:1px solid #dde4f0;">제1종 자연환경 보존지역</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">10 lux</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">50 cd/m²</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">5 / 20 cd/m²</td></tr>
+          <tr style="background:#f9f9f9;"><td style="padding:7px 10px; border:1px solid #dde4f0;">제2종 농림지역</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">10 lux</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">400 cd/m²</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">5 / 60 cd/m²</td></tr>
+          <tr><td style="padding:7px 10px; border:1px solid #dde4f0;">제3종 주거지역</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">10 lux</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">800 cd/m²</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">15 / 180 cd/m²</td></tr>
+          <tr style="background:#f9f9f9;"><td style="padding:7px 10px; border:1px solid #dde4f0;">제4종 상업·공업지역</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">25 lux</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">1,000 cd/m²</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center;">25 / 300 cd/m²</td></tr>
+        </table>
+        <p style="font-weight:700; margin-bottom:6px;">과태료 부과 기준 (시행령 제8조)</p>
+        <table style="width:100%; border-collapse:collapse; font-size:.85rem; margin-bottom:14px;">
+          <tr style="background:#f0f4fb;"><th style="padding:8px 10px; border:1px solid #dde4f0; text-align:left;">위반 횟수</th><th style="padding:8px 10px; border:1px solid #dde4f0;">과태료</th><th style="padding:8px 10px; border:1px solid #dde4f0;">적용 대상</th></tr>
+          <tr><td style="padding:7px 10px; border:1px solid #dde4f0;">1차 위반</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center; color:#f97316; font-weight:600;">100만원 이하</td><td style="padding:7px 10px; border:1px solid #dde4f0;">전광판·광고조명·외부조명 등 조명환경관리구역 기준 위반자</td></tr>
+          <tr style="background:#f9f9f9;"><td style="padding:7px 10px; border:1px solid #dde4f0;">2차 위반</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center; color:#dc2626; font-weight:600;">150만원 이하</td><td style="padding:7px 10px; border:1px solid #dde4f0;">전광판·광고조명·외부조명 등 조명환경관리구역 기준 위반자</td></tr>
+          <tr><td style="padding:7px 10px; border:1px solid #dde4f0;">3차 이상 위반</td><td style="padding:7px 10px; border:1px solid #dde4f0; text-align:center; color:#dc2626; font-weight:700;">200만원 이하</td><td style="padding:7px 10px; border:1px solid #dde4f0;">전광판·광고조명·외부조명 등 조명환경관리구역 기준 위반자</td></tr>
+        </table>
+        <p style="font-size:.82rem; color:#666;">* 본 서비스는 <strong>1차 위반 기준(100만원 이하)</strong>을 적용하여 과태료를 시뮬레이션합니다. (50만원: 경미 위반, 75만원: 중등 위반, 100만원: 심각 위반)<br/>
+        실제 처분은 검사결과와 담당 기관(환경부·지자체)의 시정명령 후 결정됩니다.</p>
       </div>
     </div>
     </div>
