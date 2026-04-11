@@ -1,0 +1,79 @@
+Traceback (most recent call last):
+  File "E:\visual.code\Light_Pollution\train_model.py", line 101, in <module>
+    main()
+    ~~~~^^
+  File "E:\visual.code\Light_Pollution\train_model.py", line 67, in main
+    result = model.train(
+        data=data_cfg,
+    ...<12 lines>...
+        patience=0,
+    )
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\engine\model.py", line 777, in train
+    self.trainer.train()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\engine\trainer.py", line 244, in train
+    self._do_train()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\engine\trainer.py", line 436, in _do_train
+    loss, self.loss_items = self.model(batch)
+                            ~~~~~~~~~~^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\site-packages\torch\nn\modules\module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\site-packages\torch\nn\modules\module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\tasks.py", line 141, in forward
+    return self.loss(x, *args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\tasks.py", line 334, in loss
+    preds = self.forward(batch["img"])
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\tasks.py", line 142, in forward
+    return self.predict(x, *args, **kwargs)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\tasks.py", line 159, in predict
+    return self._predict_once(x, profile, visualize, embed)
+           ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\tasks.py", line 181, in _predict_once
+    x = m(x)  # run
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\site-packages\torch\nn\modules\module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\site-packages\torch\nn\modules\module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\modules\block.py", line 312, in forward
+    return self.cv2(torch.cat(y, 1))
+           ~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\site-packages\torch\nn\modules\module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\site-packages\torch\nn\modules\module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\modules\conv.py", line 78, in forward
+    return self.act(self.bn(self.conv(x)))
+                    ~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\site-packages\torch\nn\modules\module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\site-packages\torch\nn\modules\module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\site-packages\torch\nn\modules\batchnorm.py", line 194, in forward
+    return F.batch_norm(
+           ~~~~~~~~~~~~^
+        input,
+        ^^^^^^
+    ...<11 lines>...
+        self.eps,
+        ^^^^^^^^^
+    )
+    ^
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\site-packages\torch\nn\functional.py", line 2846, in batch_norm
+    return torch.batch_norm(
+           ~~~~~~~~~~~~~~~~^
+        input,
+        ^^^^^^
+    ...<7 lines>...
+        torch.backends.cudnn.enabled,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+KeyboardInterrupt

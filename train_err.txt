@@ -1,0 +1,49 @@
+Traceback (most recent call last):
+  File "E:\visual.code\Light_Pollution\train_model.py", line 101, in <module>
+    main()
+    ~~~~^^
+  File "E:\visual.code\Light_Pollution\train_model.py", line 67, in main
+    result = model.train(
+        data=data_cfg,
+    ...<12 lines>...
+        patience=0,
+    )
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\engine\model.py", line 774, in train
+    self.trainer.model = self.trainer.get_model(weights=self.model if self.ckpt else None, cfg=self.model.yaml)
+                         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\models\yolo\detect\train.py", line 163, in get_model
+    model = DetectionModel(cfg, nc=self.data["nc"], ch=self.data["channels"], verbose=verbose and RANK == -1)
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\tasks.py", line 393, in __init__
+    self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
+                            ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\tasks.py", line 1725, in parse_model
+    LOGGER.info(f"{i:>3}{f!s:>20}{n_:>3}{m_.np:10.0f}  {t:<45}{args!s:<30}")  # print
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Traceback (most recent call last):
+  File "E:\visual.code\Light_Pollution\train_model.py", line 101, in <module>
+    main()
+  File "E:\visual.code\Light_Pollution\train_model.py", line 67, in main
+    result = model.train(
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\engine\model.py", line 774, in train
+    self.trainer.model = self.trainer.get_model(weights=self.model if self.ckpt else None, cfg=self.model.yaml)
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\models\yolo\detect\train.py", line 163, in get_model
+    model = DetectionModel(cfg, nc=self.data["nc"], ch=self.data["channels"], verbose=verbose and RANK == -1)
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\tasks.py", line 393, in __init__
+    self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
+  File "C:\Users\TaeSeung_Cho\AppData\Roaming\Python\Python313\site-packages\ultralytics\nn\tasks.py", line 1725, in parse_model
+    LOGGER.info(f"{i:>3}{f!s:>20}{n_:>3}{m_.np:10.0f}  {t:<45}{args!s:<30}")  # print
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\logging\__init__.py", line 1520, in info
+    self._log(INFO, msg, args, **kwargs)
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\logging\__init__.py", line 1665, in _log
+    self.handle(record)
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\logging\__init__.py", line 1681, in handle
+    self.callHandlers(record)
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\logging\__init__.py", line 1737, in callHandlers
+    hdlr.handle(record)
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\logging\__init__.py", line 1027, in handle
+    self.emit(record)
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\logging\__init__.py", line 1155, in emit
+    self.flush()
+  File "C:\Users\TaeSeung_Cho\AppData\Local\Programs\Python\Python313\Lib\logging\__init__.py", line 1137, in flush
+    self.stream.flush()
+KeyboardInterrupt

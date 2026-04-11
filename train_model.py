@@ -40,6 +40,7 @@ def main():
     parser.add_argument('--imgsz', type=int, default=640, help='이미지 사이즈')
     parser.add_argument('--model', default='yolov8n.pt', help='기본 YOLO 모델 체크포인트')
     parser.add_argument('--output', default='models', help='저장 폴더')
+    parser.add_argument('--name', default='light_pollution', help='학습 실험 이름')
     args = parser.parse_args()
 
     if os.path.isfile(args.data) and args.data.lower().endswith(('.yaml', '.yml')):
@@ -69,7 +70,7 @@ def main():
         imgsz=args.imgsz,
         batch=args.batch,
         project=args.output,
-        name='light_pollution',
+        name=args.name,
         exist_ok=True,
         plots=False,
         save=True,
