@@ -440,7 +440,7 @@ function mainPageInit() {
 function analysisPageInit() {
   syncFooterContact();
   const { data, file, size, time } = readSessionImage();
-  ["light_detected", "light_overall", "light_totalFine", "light_violationCount", "light_riskSummary", "light_modelStatus", "light_zone", "light_zoneLabel", "light_gpsDetected", "light_allZonesMode", "light_zonesSummary"].forEach((k) => sessionStorage.removeItem(k));
+  ["light_detected", "light_overall", "light_totalFine", "light_violationCount", "light_riskSummary", "light_modelStatus", "light_zone", "light_zoneLabel", "light_gpsDetected", "light_allZonesMode", "light_zonesSummary", "light_pollutionOverall", "light_pollutionSummary"].forEach((k) => sessionStorage.removeItem(k));
   const imageEl = document.getElementById("analysisImage");
   const fileNameEl = document.getElementById("fileName");
   const uploadTimeEl = document.getElementById("uploadTime");
@@ -480,9 +480,9 @@ function analysisPageInit() {
       if (statusText) statusText.textContent = "AI 분석이 완료되었습니다. 결과 페이지로 이동합니다.";
       resolveImageDataForApi(data).then((apiInput) => callApiAnalyze(apiInput)).then((apiResult) => {
         const objectNames = apiResult.detected.map((o) => {
-          const unit = o.lawUnit || (o.type === "가로등" ? "lux" : "cd/m²");
+          const unit = o.unit || (o.type === "가로등" ? "lux" : "cd/m²");
           const measured = o.measuredValue ?? (unit === "lux" ? o.illuminanceLux : o.luminanceCdM2) ?? o.brightness;
-          return `${o.name}(${Math.round(measured)} ${unit})`;
+          return `${o.name}(${Math.round(measured)} ${unit}, 추정)`;
         }).join(", ");
         const detectedObjectsEl = document.getElementById("detectedObjects");
         const detectedRiskEl = document.getElementById("detectedRisk");
@@ -499,6 +499,8 @@ function analysisPageInit() {
         sessionStorage.setItem("light_gpsDetected", apiResult.gpsDetected ? "true" : "false");
         sessionStorage.setItem("light_allZonesMode", apiResult.allZonesMode ? "true" : "false");
         sessionStorage.setItem("light_zonesSummary", JSON.stringify(apiResult.zonesSummary || {}));
+        sessionStorage.setItem("light_pollutionOverall", apiResult.overallPollutionCategory || "미탐지");
+        sessionStorage.setItem("light_pollutionSummary", JSON.stringify(apiResult.pollutionCategorySummary || {}));
       }).catch((err) => {
         console.error("분석 결과 저장 실패", err);
       }).finally(() => {
@@ -544,6 +546,8 @@ function resultPageInit() {
   const gpsDetected = sessionStorage.getItem("light_gpsDetected") === "true";
   const allZonesMode = sessionStorage.getItem("light_allZonesMode") === "true";
   const zonesSummary = JSON.parse(sessionStorage.getItem("light_zonesSummary") || "{}");
+  const pollutionOverall = sessionStorage.getItem("light_pollutionOverall") || "미탐지";
+  const pollutionSummary = JSON.parse(sessionStorage.getItem("light_pollutionSummary") || "{}");
 
   if (summaryOverall) summaryOverall.textContent = allZonesMode ? "종합 판정: GPS 미확인" : `종합 판정: ${overall}`;
   if (summaryBadge) {
@@ -552,7 +556,9 @@ function resultPageInit() {
   }
   if (summaryViolation) summaryViolation.textContent = totalFine > 0 ? `${totalFine}만원` : "없음";
   if (summaryConfidence) summaryConfidence.textContent = `${violationCount}건`;
-  if (resultDetected) resultDetected.textContent = detected.map((d) => `${d.name}(${d.violationStage || '준수'})`).join(", ") || "탐지된 객체 없음";
+  if (resultDetected) {
+    resultDetected.textContent = detected.map((d) => `${d.name}(${d.pollutionCategory || "미분류"}/${d.violationStage || '준수'})`).join(", ") || "탐지된 객체 없음";
+  }
   if (riskSummary) riskSummary.textContent = riskSum;
 
   const summaryDetectedCount = document.getElementById("summaryDetectedCount");
@@ -664,7 +670,10 @@ function resultPageInit() {
       popup.innerHTML = `
         <button class="popup-close" title="닫기">×</button>
         <strong>${item.name} (${item.lightType || item.type})</strong>
-        측정값: <b>${Math.round(measured)} ${lawUnit}</b><br/>
+        빛 공해 분류: <b>${item.pollutionCategory || "미분류"}</b> <small>${item.pollutionCategoryDesc || ""}</small><br/>
+        측정값(참고용 추정): <b>${Math.round(measured)} ${lawUnit}</b><br/>
+        ROI 밝기 평균/95%: ${Math.round(item.brightness ?? 0)} / ${Math.round(item.brightnessP95 ?? item.brightness ?? 0)}<br/>
+        밝은 픽셀 비율: ${Number(item.brightPixelRatio ?? 0).toFixed(1)}%<br/>
         기준치: ${item.threshold ?? "-"} ${lawUnit} <small>(${item.basis || "-"})</small><br/>
         준수 여부: <b>${item.compliance}</b>${item.violationStage ? " · " + item.violationStage : ""}<br/>
         과태료: ${fineText}
@@ -687,7 +696,7 @@ function resultPageInit() {
       box.style.width = `${item.box.width}%`;
       box.style.height = `${item.box.height}%`;
 
-      const lawUnit = item.lawUnit || (item.type === "가로등" ? "lux" : "cd/m²");
+      const lawUnit = item.unit || (item.type === "가로등" ? "lux" : "cd/m²");
       const measured = item.measuredValue ?? (lawUnit === "lux" ? item.illuminanceLux : item.luminanceCdM2) ?? item.brightness;
 
       let activePopupId = null;
@@ -715,7 +724,10 @@ function resultPageInit() {
   document.getElementById("saveBtn")?.addEventListener("click", () => { alert("분석 결과가 저장되었습니다. (더미)"); });
   document.getElementById("downloadBtn")?.addEventListener("click", () => {
     const link = document.createElement("a");
-    const blob = new Blob([`빛 공해 분석 리포트\n파일: ${file}\n종합 판정: ${overall}\n총 과태료: ${totalFine}만원\n위반 건수: ${violationCount}건\n구역: ${zone}(${zoneLabel})\n탐지 객체: ${detected.map((d) => d.name).join(", ")}`], { type: "text/plain" });
+    const pollutionCountsText = pollutionSummary?.counts
+      ? `침입광 ${pollutionSummary.counts["침입광"] || 0}건, 눈부심 ${pollutionSummary.counts["눈부심"] || 0}건, 산란광 ${pollutionSummary.counts["산란광"] || 0}건, 군집된빛 ${pollutionSummary.counts["군집된빛"] || 0}건`
+      : "-";
+    const blob = new Blob([`빛 공해 분석 리포트\n파일: ${file}\n종합 판정: ${overall}\n빛 공해 대표 분류: ${pollutionOverall}\n유형별 집계: ${pollutionCountsText}\n총 과태료: ${totalFine}만원\n위반 건수: ${violationCount}건\n구역: ${zone}(${zoneLabel})\n탐지 객체: ${detected.map((d) => `${d.name}(${d.pollutionCategory || "미분류"})`).join(", ")}`], { type: "text/plain" });
     link.href = URL.createObjectURL(blob);
     link.download = "light_pollution_report.txt";
     link.click();
