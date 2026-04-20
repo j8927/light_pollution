@@ -60,15 +60,17 @@ function extractGpsFromArrayBuffer(buffer) {
   try {
     const dv = new DataView(buffer);
     // JPEG 시그니처 확인
-    if (dv.getUint16(0) !== 0xFFD8) return null;
+    if (dv.getUint16(0, false) !== 0xFFD8) return null;
 
     let offset = 2;
     let tiffStart = -1;
+    let isLittleEndian = false;
+
     // APP1 마커(0xFFE1)에서 EXIF 탐색
     while (offset + 4 <= dv.byteLength) {
       if (dv.getUint8(offset) !== 0xFF) break;
       const marker = dv.getUint8(offset + 1);
-      const segLen = dv.getUint16(offset + 2); // 마커 길이 (길이 바이트 포함)
+      const segLen = dv.getUint16(offset + 2, false); // 빅 엔디안으로 먼저 읽기
       if (marker === 0xE1 && offset + 10 <= dv.byteLength) {
         // "Exif\0\0" 확인
         if (dv.getUint8(offset+4)===0x45 && dv.getUint8(offset+5)===0x78 &&
@@ -81,46 +83,60 @@ function extractGpsFromArrayBuffer(buffer) {
     }
     if (tiffStart < 0) return null;
 
-    // TIFF 헤더 (byte order + magic)
-    const byteOrder = dv.getUint16(tiffStart);
-    const le = (byteOrder === 0x4949); // 'II' = little endian
-    if (dv.getUint16(tiffStart + 2, le) !== 42) return null;
+    // TIFF 헤더에서 바이트 오더 확인
+    const byteOrder = dv.getUint16(tiffStart, false);
+    isLittleEndian = (byteOrder === 0x4949); // 'II' = little endian, 'MM' = big endian
 
-    const ifd0Offset = dv.getUint32(tiffStart + 4, le);
+    // IFD0 오프셋
+    const ifd0Offset = dv.getUint32(tiffStart + 4, isLittleEndian);
     const ifd0Abs = tiffStart + ifd0Offset;
-    const ifd0Count = dv.getUint16(ifd0Abs, le);
+    const ifd0Count = dv.getUint16(ifd0Abs, isLittleEndian);
 
     // IFD0에서 GPS IFD 오프셋(tag 0x8825) 탐색
     let gpsIfdOffset = -1;
     for (let i = 0; i < ifd0Count; i++) {
       const e = ifd0Abs + 2 + i * 12;
-      if (dv.getUint16(e, le) === 0x8825) {
-        gpsIfdOffset = dv.getUint32(e + 8, le);
+      const tag = dv.getUint16(e, isLittleEndian);
+      if (tag === 0x8825) { // GPSInfo
+        gpsIfdOffset = dv.getUint32(e + 8, isLittleEndian);
         break;
       }
     }
     if (gpsIfdOffset < 0) return null;
 
     const gpsAbs = tiffStart + gpsIfdOffset;
-    const gpsCount = dv.getUint16(gpsAbs, le);
+    const gpsCount = dv.getUint16(gpsAbs, isLittleEndian);
 
-    function readRational3(valOffset) {
-      const abs = tiffStart + valOffset;
-      const d = dv.getUint32(abs,      le) / dv.getUint32(abs + 4,  le);
-      const m = dv.getUint32(abs + 8,  le) / dv.getUint32(abs + 12, le);
-      const s = dv.getUint32(abs + 16, le) / dv.getUint32(abs + 20, le);
+    function readRational(offset) {
+      const num = dv.getUint32(offset, isLittleEndian);
+      const den = dv.getUint32(offset + 4, isLittleEndian);
+      return den === 0 ? 0 : num / den;
+    }
+
+    function readDegrees(offset) {
+      const d = readRational(offset);
+      const m = readRational(offset + 8);
+      const s = readRational(offset + 16);
       return d + m / 60 + s / 3600;
     }
 
     let latRef = null, lonRef = null, lat = null, lon = null;
     for (let i = 0; i < gpsCount; i++) {
       const e = gpsAbs + 2 + i * 12;
-      const tag = dv.getUint16(e, le);
-      const valOff = dv.getUint32(e + 8, le);
-      if (tag === 0x0001) latRef = String.fromCharCode(dv.getUint8(e + 8));
-      else if (tag === 0x0002) lat = readRational3(valOff);
-      else if (tag === 0x0003) lonRef = String.fromCharCode(dv.getUint8(e + 8));
-      else if (tag === 0x0004) lon = readRational3(valOff);
+      const tag = dv.getUint16(e, isLittleEndian);
+      const format = dv.getUint16(e + 2, isLittleEndian);
+      const components = dv.getUint32(e + 4, isLittleEndian);
+      const valueOffset = dv.getUint32(e + 8, isLittleEndian);
+
+      if (tag === 0x0001 && format === 2) { // GPSLatitudeRef
+        latRef = String.fromCharCode(dv.getUint8(tiffStart + valueOffset));
+      } else if (tag === 0x0002 && format === 5 && components === 3) { // GPSLatitude
+        lat = readDegrees(tiffStart + valueOffset);
+      } else if (tag === 0x0003 && format === 2) { // GPSLongitudeRef
+        lonRef = String.fromCharCode(dv.getUint8(tiffStart + valueOffset));
+      } else if (tag === 0x0004 && format === 5 && components === 3) { // GPSLongitude
+        lon = readDegrees(tiffStart + valueOffset);
+      }
     }
 
     if (lat === null || lon === null) return null;
@@ -128,6 +144,7 @@ function extractGpsFromArrayBuffer(buffer) {
     if (lonRef === 'W') lon = -lon;
     return { lat, lon };
   } catch (e) {
+    console.warn('GPS 파싱 오류:', e);
     return null;
   }
 }
