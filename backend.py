@@ -50,6 +50,52 @@ LIGHT_TYPE_MAP = {
     '조명':  '장식조명',    # 휘도(cd/m²) 평균/최대값 기준
 }
 
+# 빛 공해 4대 분류
+POLLUTION_TYPES = {
+    '침입광': '원치 않는 공간(창가/주거 방향)으로 유입되는 조명',
+    '눈부심': '고휘도 광원이 시야 불편을 유발하는 상태',
+    '산란광': '하늘 방향으로 퍼지는 확산광/배경 밝아짐',
+    '군집된빛': '간판·장식 조명이 과도하게 밀집된 상태',
+}
+
+# 대 분류 튜닝 파라미터, 필요 시 조정
+POLLUTION_THRESHOLDS = {
+    'edge_margin': 0.14,
+    'intrusion_avg': 52.0,
+    'glare_p95': 230.0,
+    'glare_gamma': 2.45,
+    'glare_ratio_upper': 14.0,
+    'scatter_area': 0.22,
+    'scatter_ratio': 4.2,
+    'scatter_sat_max': 0.40,
+    'cluster_sat': 0.30,
+    'cluster_ratio': 2.0,
+    'cluster_count_bonus': 2,
+    # 탐지 유지 임계값(어두운 장면 누락 완화)
+    'min_confidence': 0.24,
+    'min_brightness': 60.0,
+    'min_p95': 175.0,
+    'min_bright_ratio': 1.2,
+}
+
+
+def should_keep_detection(obj):
+    """어두운 환경 누락을 줄이기 위한 적응형 탐지 필터."""
+    th = POLLUTION_THRESHOLDS
+    if obj['type'] not in ('간판', '가로등', '조명'):
+        return False
+
+    conf_ok = obj.get('confidence', 0.0) >= th['min_confidence']
+    if not conf_ok:
+        return False
+
+    # 기존 평균 밝기 기준 + 상위 밝기(p95) + 밝은 픽셀 비율 중 하나라도 만족하면 유지
+    return (
+        obj.get('brightness', 0) >= th['min_brightness'] or
+        obj.get('brightnessP95', 0) >= th['min_p95'] or
+        obj.get('brightPixelRatio', 0.0) >= th['min_bright_ratio']
+    )
+
 # ---- 조명환경관리구역 구분 (인공조명에 의한 빛공해 방지법 시행규칙) ----
 ZONE_LABELS = {
     '제1종': '자연환경 보존지역',
@@ -118,6 +164,12 @@ def estimate_illuminance_lux(luminance_0_255):
     return float((norm ** 1.05) * 60.0)
 
 
+def _srgb_to_linear(channel_0_255):
+    """sRGB(0~255)를 선형광(linear light, 0~1)으로 변환."""
+    c = np.clip(channel_0_255 / 255.0, 0.0, 1.0)
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
 def _white_balance(img):
     """Gray World 화이트 밸런스 보정 — 색온도 편향 제거."""
     result = img.astype(np.float32)
@@ -158,22 +210,32 @@ def analyze_region_metrics(cropped):
     바운딩박스 영역의 휘도·조도 측정.
     평균값(avg)과 최대값(max) 모두 반환 — 장식조명·공간조명 법규 판정에 각각 사용.
     """
-    r = cropped[:, :, 0].astype(np.float32)
-    g = cropped[:, :, 1].astype(np.float32)
-    b = cropped[:, :, 2].astype(np.float32)
-    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    brightness_avg = float(np.mean(lum))
-    brightness_max = float(np.max(lum))
+    # sRGB를 선형화한 뒤 상대휘도(Rec.709 계수) 계산
+    r_lin = _srgb_to_linear(cropped[:, :, 0].astype(np.float32))
+    g_lin = _srgb_to_linear(cropped[:, :, 1].astype(np.float32))
+    b_lin = _srgb_to_linear(cropped[:, :, 2].astype(np.float32))
+    lum_rel = 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin
+
+    # 기존 API/판정 로직 호환을 위해 0~255 스케일로 환산
+    lum_255 = np.clip(lum_rel * 255.0, 0.0, 255.0)
+    brightness_avg = float(np.mean(lum_255))
+    brightness_max = float(np.max(lum_255))
+    brightness_p95 = float(np.percentile(lum_255, 95))
+
+    # 충분히 밝은 픽셀(선형 상대휘도 0.7 이상)의 비율(%)
+    bright_pixel_ratio = float(np.mean(lum_rel >= 0.7) * 100.0)
+
     hsv = cv2.cvtColor(cropped, cv2.COLOR_RGB2HSV)
     s = hsv[:, :, 1].astype(np.float32) / 255
     saturation = float(np.mean(s))
-    gamma = float(np.clip(1.8 + np.std(lum) / 64.0, 1.0, 3.5))
+    gamma = float(np.clip(1.8 + np.std(lum_255) / 64.0, 1.0, 3.5))
     luminance_cd_m2_avg = estimate_luminance_cd_m2(brightness_avg)
     luminance_cd_m2_max = estimate_luminance_cd_m2(brightness_max)
     illuminance_lux_avg = estimate_illuminance_lux(brightness_avg)
     illuminance_lux_max = estimate_illuminance_lux(brightness_max)
     return (brightness_avg, luminance_cd_m2_avg, illuminance_lux_avg,
-            saturation, gamma, luminance_cd_m2_max, illuminance_lux_max)
+            saturation, gamma, luminance_cd_m2_max, illuminance_lux_max,
+            brightness_p95, bright_pixel_ratio)
 
 
 def classify_by_geometry(x1, y1, x2, y2, img_h, img_w):
@@ -191,6 +253,119 @@ def classify_by_geometry(x1, y1, x2, y2, img_h, img_w):
     if y1 < img_h * 0.45 and aspect <= 0.9:
         return '가로등'
     return '조명'
+
+
+def classify_pollution_category(cat, brightness_avg, brightness_p95,
+                                bright_pixel_ratio, saturation, gamma,
+                                x1, y1, x2, y2, img_h, img_w):
+    """탐지 객체를 빛 공해 4대 분류(침입광/눈부심/산란광/군집된빛)로 분류."""
+    th = POLLUTION_THRESHOLDS
+    box_area = max(1, (x2 - x1) * (y2 - y1))
+    img_area = max(1, img_h * img_w)
+    area_ratio = box_area / img_area
+
+    edge_margin_x = min(x1, max(0, img_w - x2)) / max(1, img_w)
+    edge_margin_y = min(y1, max(0, img_h - y2)) / max(1, img_h)
+    near_edge = edge_margin_x < th['edge_margin'] or edge_margin_y < th['edge_margin']
+
+    # 객체별 점수 계산: 단일 if-else보다 과소/과대 분류를 줄이기 위해 점수 기반 선택
+    score = {'침입광': 0.0, '눈부심': 0.0, '산란광': 0.0, '군집된빛': 0.0}
+
+    # 침입광: 경계 인접 + 평균 밝기
+    if near_edge:
+        score['침입광'] += 1.6
+    if brightness_avg >= th['intrusion_avg']:
+        score['침입광'] += 1.0
+    if area_ratio < 0.25:
+        score['침입광'] += 0.4
+
+    # 눈부심: 높은 p95/감마 + 상대적으로 집중된 고광도
+    if brightness_p95 >= th['glare_p95']:
+        score['눈부심'] += 1.9
+    if gamma >= th['glare_gamma']:
+        score['눈부심'] += 1.2
+    if bright_pixel_ratio <= th['glare_ratio_upper']:
+        score['눈부심'] += 0.5
+    if cat == '가로등':
+        score['눈부심'] += 0.6
+
+    # 산란광: 큰 영역 + 넓은 밝은 픽셀 분포 + 저채도
+    if area_ratio >= th['scatter_area']:
+        score['산란광'] += 1.7
+    if bright_pixel_ratio >= th['scatter_ratio']:
+        score['산란광'] += 1.3
+    if saturation <= th['scatter_sat_max']:
+        score['산란광'] += 0.7
+    if y1 <= img_h * 0.25:
+        score['산란광'] += 0.4
+
+    # 군집된빛: 간판/조명 중심 + 채도/광밀도
+    if cat in ('간판', '조명'):
+        score['군집된빛'] += 1.2
+    if saturation >= th['cluster_sat']:
+        score['군집된빛'] += 1.1
+    if bright_pixel_ratio >= th['cluster_ratio']:
+        score['군집된빛'] += 0.8
+
+    # 기본 priors
+    if cat == '간판':
+        score['군집된빛'] += 0.6
+    elif cat == '가로등':
+        score['눈부심'] += 0.4
+    else:
+        score['침입광'] += 0.3
+
+    return max(score, key=score.get)
+
+
+def summarize_pollution_categories(detected):
+    """객체별 분류를 집계해 사진의 대표 분류를 산출."""
+    counts = {'침입광': 0, '눈부심': 0, '산란광': 0, '군집된빛': 0}
+    weighted_counts = {'침입광': 0.0, '눈부심': 0.0, '산란광': 0.0, '군집된빛': 0.0}
+    for d in detected:
+        cat = d.get('pollutionCategory')
+        if cat in counts:
+            counts[cat] += 1
+            conf = float(d.get('confidence', 0.5))
+            # 신뢰도 가중치(최소 0.1)로 과소신뢰 탐지의 영향 축소
+            weighted_counts[cat] += max(0.1, min(conf, 1.0))
+
+    if not detected:
+        return {
+            'overall': '미탐지',
+            'counts': counts,
+            'weightedCounts': weighted_counts,
+            'description': '광원 객체가 탐지되지 않았습니다.'
+        }
+
+    # 동률일 때는 법규/민원 우선순위 관점으로 눈부심 > 침입광 > 군집된빛 > 산란광
+    tie_break_order = ['눈부심', '침입광', '군집된빛', '산란광']
+    max_weight = max(weighted_counts.values())
+    winners = [k for k, v in weighted_counts.items() if abs(v - max_weight) < 1e-9]
+    if len(winners) > 1:
+        max_count = max(counts[k] for k in winners)
+        winners = [k for k in winners if counts[k] == max_count]
+    overall = next((k for k in tie_break_order if k in winners), winners[0])
+
+    return {
+        'overall': overall,
+        'counts': counts,
+        'weightedCounts': {k: round(v, 3) for k, v in weighted_counts.items()},
+        'description': POLLUTION_TYPES.get(overall, ''),
+    }
+
+
+def build_default_zones_summary():
+    """EXIF/GPS 미확인 시 기본 4개 구역 시뮬레이션 결과(탐지 실패 대비)."""
+    return {
+        zc: {
+            'zoneLabel': ZONE_LABELS[zc],
+            'overall': '준수',
+            'totalFineAmount': 0,
+            'violationCount': 0,
+        }
+        for zc in ('제1종', '제2종', '제3종', '제4종')
+    }
 
 
 # ---- EXIF GPS 추출 ----
@@ -401,20 +576,16 @@ def analyze_api():
         gps_coords = extract_gps_from_exif(raw_bytes)
     zone_code = get_zone_from_gps(*gps_coords) if gps_coords else None
 
-    # 2. GPS 없을 때 요청 파라미터 확인
-    explicit_zone = data.get('zone') or data.get('regionType')
+    # 2. GPS 없을 때는 항상 4개 구역 전체 시뮬레이션
     all_zones_mode = False
     if not zone_code:
-        if explicit_zone:
-            zone_code = normalize_zone_code(explicit_zone)
-        else:
-            # GPS도 없고 zone 파라미터도 없음 → 4개 구역 전체 시뮬레이션
-            all_zones_mode = True
-            zone_code = '제3종'  # 탐지 필터링용 임시값
+        all_zones_mode = True
+        zone_code = '제3종'  # 탐지 필터링용 임시값
 
     # 전처리
     img_proc = preprocess_image(img)
     h, w = img.shape[:2]
+    gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     detected = []
 
     if MODEL is not None:
@@ -426,6 +597,7 @@ def analyze_api():
             for b in boxes:
                 x1, y1, x2, y2 = map(int, b.xyxy[0].tolist())
                 cls_id = int(b.cls[0])
+                conf = float(b.conf[0]) if hasattr(b, 'conf') else 0.5
                 label = names.get(cls_id, f'class_{cls_id}')
                 cropped = img[max(y1, 0):min(y2, h), max(x1, 0):min(x2, w)]
                 if cropped.size == 0:
@@ -433,7 +605,8 @@ def analyze_api():
 
                 (brightness, luminance_cd_m2_avg, illuminance_lux_avg,
                  saturation, gamma,
-                 luminance_cd_m2_max, illuminance_lux_max) = analyze_region_metrics(cropped)
+                 luminance_cd_m2_max, illuminance_lux_max,
+                 brightness_p95, bright_pixel_ratio) = analyze_region_metrics(cropped)
 
                 # 카테고리 분류
                 if label in DIRECT_LIGHT_CLASSES:
@@ -444,6 +617,11 @@ def analyze_api():
                     cat = classify_by_geometry(x1, y1, x2, y2, h, w)
 
                 light_type = LIGHT_TYPE_MAP.get(cat, '장식조명')
+                pollution_category = classify_pollution_category(
+                    cat, brightness, brightness_p95,
+                    bright_pixel_ratio, saturation, gamma,
+                    x1, y1, x2, y2, h, w
+                )
                 if all_zones_mode:
                     zone_results = {
                         zc: compute_fine(luminance_cd_m2_avg, luminance_cd_m2_max,
@@ -462,13 +640,19 @@ def analyze_api():
                     'name':             label,
                     'type':             cat,
                     'lightType':        light_type,
+                    'confidence':       round(conf, 3),
                     'brightness':       int(brightness),
                     'luminanceCdM2':    round(luminance_cd_m2_avg, 1),
                     'luminanceCdM2Max': round(luminance_cd_m2_max, 1),
                     'illuminanceLux':   round(illuminance_lux_avg, 1),
                     'illuminanceLuxMax':round(illuminance_lux_max, 1),
+                    'brightnessP95':    round(brightness_p95, 1),
+                    'brightPixelRatio': round(bright_pixel_ratio, 1),
                     'saturation':       round(saturation, 2),
                     'gamma':            round(gamma, 2),
+                    'pollutionCategory': pollution_category,
+                    'pollutionCategoryDesc': POLLUTION_TYPES[pollution_category],
+                    'measurementNote':  'cd/m², lux 값은 이미지 기반 참고용 추정치입니다.',
                     'compliance':       fine['compliance'],
                     'violationStage':   fine['violationStage'],
                     'fineLabel':        fine.get('fineLabel'),
@@ -488,15 +672,12 @@ def analyze_api():
                 })
 
             # 광원 관련 객체(간판·가로등·조명)만 유지, 너무 어두운 객체 제외
-            detected = [
-                d for d in detected
-                if d['type'] in ('간판', '가로등', '조명') and d['brightness'] >= 60
-            ]
+            detected = [d for d in detected if should_keep_detection(d)]
         except Exception:
             detected = []
 
     # GPS 없는 경우 전체 구역 요약 계산
-    zones_summary = {}
+    zones_summary = build_default_zones_summary() if all_zones_mode else {}
     if all_zones_mode and detected:
         for zc in ('제1종', '제2종', '제3종', '제4종'):
             zv = [d['zoneResults'][zc] for d in detected if d.get('zoneResults')]
@@ -510,6 +691,8 @@ def analyze_api():
                 'violationCount':  len(zv_violations),
             }
 
+    pollution_summary = summarize_pollution_categories(detected)
+
     # 탐지 실패
     if not detected:
         return jsonify({
@@ -521,8 +704,10 @@ def analyze_api():
             'zoneLabel':     ZONE_LABELS.get(zone_code, zone_code),
             'gpsDetected':   gps_coords is not None,
             'allZonesMode':  all_zones_mode,
-            'zonesSummary':  {},
-            'avgBrightness': int(np.mean(cv2.cvtColor(img, cv2.COLOR_RGB2GRAY))),
+            'zonesSummary':  zones_summary,
+            'overallPollutionCategory': pollution_summary['overall'],
+            'pollutionCategorySummary': pollution_summary,
+            'avgBrightness': int(np.mean(gray_img)),
             'model':         MODEL_STATUS,
             'detectionSource': 'none',
         })
@@ -532,7 +717,7 @@ def analyze_api():
     stages = [d['violationStage'] for d in violations if d['violationStage']]
     max_stage = next((s for s in ('3단계', '2단계', '1단계') if s in stages), None)
     total_fine = sum(d['fineAmount'] for d in violations)
-    avg_brightness = float(np.mean(cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)))
+    avg_brightness = float(np.mean(gray_img))
 
     return jsonify({
         'status':           'success',
@@ -541,10 +726,10 @@ def analyze_api():
         'violationCount':   len(violations),
         'detected':         detected,
         'riskSummary':      (
-            f'GPS 미확인 — 구역별 시뮬레이션 (제3종 기준 최대 {total_fine}만원)'
+            f'GPS 미확인 — 4개 구역 시뮬레이션 (제3종 기준 최대 {total_fine}만원) · 유형: {pollution_summary["overall"]} · cd/m²/lux는 참고용 추정치'
             if all_zones_mode else (
-                f'{max_stage} 위반 — 과태료 {total_fine}만원 수준'
-                if max_stage else '법규 준수'
+                f'{max_stage} 위반 — 과태료 {total_fine}만원 수준 · 유형: {pollution_summary["overall"]} · cd/m²/lux는 참고용 추정치'
+                if max_stage else f'법규 준수 · 유형: {pollution_summary["overall"]} · cd/m²/lux는 참고용 추정치'
             )
         ),
         'avgBrightness':    int(avg_brightness),
@@ -553,6 +738,8 @@ def analyze_api():
         'gpsDetected':      gps_coords is not None,
         'allZonesMode':     all_zones_mode,
         'zonesSummary':     zones_summary,
+        'overallPollutionCategory': pollution_summary['overall'],
+        'pollutionCategorySummary': pollution_summary,
         'model':            MODEL_STATUS,
         'detectionSource':  'yolo',
     })
