@@ -33,8 +33,8 @@
 본 프로젝트는 이 문제를 해결하기 위해 아래 과정을 구현한다.
 
 - 최신 객체 탐지 모델(YOLOv8)로 야간 이미지에서 간판·조명을 자동 탐지
-- 탐지된 광원 영역의 픽셀 강도를 휘도값으로 변환
-- 법적 기준치와 자동 비교하여 위반 등급(관찰 / 주의 / 고위험) 실시간 판정
+- 탐지된 광원 영역의 픽셀 강도를 휘도값(cd/m²) 또는 조도값(lux)으로 변환
+- 법적 기준치와 자동 비교하여 위반 단계(1단계 / 2단계 / 3단계) 및 과태료 산출
 - 웹 인터페이스를 통해 사진 한 장으로 누구나 결과 확인
 
 ### 개발 환경 및 도구
@@ -96,8 +96,9 @@ index.html  →  analysis.html  →  result.html
                      │
           ┌──────────┴──────────┐
           │  YOLO 객체 탐지      │
-          │  휘도 계산           │
-          │  법규 위험 점수 산출  │
+          │  휘도·조도 계산       │
+          │  법규 기준치 비교     │
+          │  과태료 단계 산출     │
           └─────────────────────┘
 ```
 
@@ -169,51 +170,145 @@ gamma = float(np.clip(1.8 + np.std(lum) / 64.0, 1.0, 3.5))
 - **채도(Saturation)**: 빛의 색 선명도 — 높을수록 강한 네온/컬러 간판일 가능성 큼
 - **감마(Gamma)**: 밝기 분산값으로 추정 — 밝기 편차가 클수록 고감마, 눈부심 위험 증가
 
-### 5-4. 법규 기반 위험 점수 산출 (`compute_law_risk`)
+### 5-4. 법규 기반 위험 점수 및 과태료 산출 (`compute_fine`)
 
-법규 기준 단위는 객체 종류에 따라 다르게 적용된다.
+법규 기준 단위는 조명 유형(공간조명, 광고물, 장식조명)과 지역구분(제1종~제4종)에 따라 다르게 적용된다.
 
-- **간판 / 조명 / 구조물**: 휘도(cd/m²) 기준
-- **가로등**: 조도(lux) 기준
+**조명 유형별 측정 기준:**
+- **공간조명(가로등)**: 조도(lux) 최대값 기준
+- **광고물(간판)**: 휘도(cd/m²) 최대값 기준
+- **장식조명(조명)**: 휘도(cd/m²) 평균값/최대값 중 더 많이 초과된 쪽 기준
 
 ```python
-# 간판·조명·구조물: cd/m² 기준
-cd_thresholds = {
-    '상업지역': {'간판': 800, '조명': 650, '구조물': 450},
-    '주거지역': {'간판': 300, '조명': 220, '구조물': 160}
+# ---- 빛 공해 4대 분류 ----
+POLLUTION_TYPES = {
+    '침입광': '원치 않는 공간(창가/주거 방향)으로 유입되는 조명',
+    '눈부심': '고휘도 광원이 시야 불편을 유발하는 상태',
+    '산란광': '하늘 방향으로 퍼지는 확산광/배경 밝아짐',
+    '군집된빛': '간판·장식 조명이 과도하게 밀집된 상태',
 }
-# 가로등: lux 기준
-lux_thresholds = {
-    '상업지역': {'가로등': 30},
-    '주거지역': {'가로등': 20}
+
+# ---- 4대 분류 튜닝 파라미터 ----
+POLLUTION_THRESHOLDS = {
+    'edge_margin': 0.14,        # 가장자리 여백
+    'intrusion_avg': 52.0,     # 침입광 평균 임계값
+    'glare_p95': 230.0,        # 눈부심 p95 밝기
+    'glare_gamma': 2.45,       # 눈부심 감마
+    'glare_ratio_upper': 14.0, # 눈부심 비율 상한
+    'scatter_area': 0.22,      # 산란광 영역
+    'scatter_ratio': 4.2,     # 산란광 비율
+    'scatter_sat_max': 0.40,  # 산란광 채도 최대
+    'cluster_sat': 0.30,       # 군집 채도
+    'cluster_ratio': 2.0,     # 군집 비율
+    'cluster_count_bonus': 2,  # 군집 수 보너스
+    # 탐지 유지 임계값
+    'min_confidence': 0.24,
+    'min_brightness': 60.0,
+    'min_p95': 175.0,
+    'min_bright_ratio': 1.2,
 }
 ```
 
-점수 계산 흐름:
+**조명환경관리구역별 법규 기준치:**
 
-| 요소 | 반영 방식 |
-|---|---|
-| 기본 점수 | 20 |
-| 채도 | `saturation × 8` |
-| 감마 | `max(0, gamma - 1.8) × 8` |
-| 카테고리 가중치 | 광원/구조물 +4, 사람/차량 +8 |
-| 준수 시 추가 | `min(12, norm × 12)`, 상한 58 |
-| 위반 시 | `60 + min(35, exceed_ratio × 40) + 채도×6 + 감마×6` |
+| 구분 | 제1종 (자연환경) | 제2종 (농림지역) | 제3종 (주거지역) | 제4종 (상업·공업) |
+|---|---|---|---|---|
+| 공간조명 (lux) | 10 | 10 | 10 | 25 |
+| 광고물 (cd/m²) | 50 | 400 | 800 | 1000 |
+| 장식조명 평균 (cd/m²) | 5 | 5 | 15 | 25 |
+| 장식조명 최대 (cd/m²) | 20 | 60 | 180 | 300 |
 
-- **관찰**: 59점 이하 — 법규 준수 가능성 높음
-- **주의**: 60~84점 — 기준치 근접, 개선 권장
-- **고위험**: 85점 이상 — 위반 가능성 높음
-
-### 5-5. 객체 미검출 시 Safe Fallback
+**과태료 단계 산출:**
+- 기준값 이하: **준수** (과태료 0원)
+- 기준값 초과 ~ 1.5배: **1단계** (50만원)
+- 1.5배 초과 ~ 2배: **2단계** (75만원)
+- 2배 초과: **3단계** (100만원 - 1차 위반 상한)
 
 ```python
-if not detected:
-    risk_score, risk_level, compliance, threshold = 20, '관찰', '준수', 800  # 상업지역 기본 cd/m² (주거지역: 300)
+def compute_fine(luminance_cd_m2_avg, luminance_cd_m2_max, illuminance_lux_max, light_type, zone_code):
+    # 조명 유형과 지역구에 따른 기준치 비교
+    # 초과 배율에 따라 1단계/2단계/3단계 산출
+    ratio = measured / max(1.0, threshold)
+    if ratio <= 1.5:
+        stage = '1단계'
+    elif ratio <= 2.0:
+        stage = '2단계'
+    else:
+        stage = '3단계'
 ```
 
-YOLO가 객체를 검출하지 못한 경우(야간 이미지가 너무 어둡거나 조명 없음) 자동으로 낮은 위험도를 반환해 오판 방지.
+### 5-5. 적응형 탐지 필터 (`should_keep_detection`)
 
-### 5-6. 프론트엔드 — sessionStorage 기반 상태 전달
+어두운 야간 환경에서의 탐지 누락을 줄이기 위한 적응형 필터.
+
+```python
+def should_keep_detection(obj):
+    """어두운 환경 누락을 줄이기 위한 적응형 탐지 필터."""
+    th = POLLUTION_THRESHOLDS
+    if obj['type'] not in ('간판', '가로등', '조명'):
+        return False
+
+    conf_ok = obj.get('confidence', 0.0) >= th['min_confidence']
+    if not conf_ok:
+        return False
+
+    # 기존 평균 밝기 기준 + 상위 밝기(p95) + 밝은 픽셀 비율 중 하나라도 만족하면 유지
+    return (
+        obj.get('brightness', 0) >= th['min_brightness'] or
+        obj.get('brightnessP95', 0) >= th['min_p95'] or
+        obj.get('brightPixelRatio', 0.0) >= th['min_bright_ratio']
+    )
+```
+
+### 5-6. EXIF GPS 추출 및 지역 자동 판별
+
+이미지 파일에 저장된 EXIF GPS 정보를 추출하여 위도·경도를 얻고, OpenStreetMap Nominatim API를 통해 조명환경관리구역(제1종~제4종)을 자동 판별합니다.
+
+```python
+def extract_gps_from_exif(image_bytes):
+    """이미지 바이트에서 EXIF GPS 좌표(위도, 경도)를 추출합니다."""
+    from PIL.ExifTags import TAGS, GPSTAGS
+    pil_img = Image.open(io.BytesIO(image_bytes))
+    exif_raw = pil_img._getexif()
+    # GPS 정보 추출 로직
+    ...
+
+def get_zone_from_gps(lat, lon):
+    """GPS 좌표로 조명환경관리구역 유형을 추정합니다."""
+    # Nominatim API 호출
+    # 제1종: 자연환경 보존지역
+    # 제2종: 농림지역
+    # 제3종: 주거지역
+    # 제4종: 상업·공업지역
+```
+
+- GPS가 없을 경우 사용자가 지역구를 직접 선택하거나, 전체 4개 구역에 대한 시뮬레이션 결과를 제공
+
+### 5-7. 이미지 전처리 파이프라인
+
+야간 이미지 탐지를 위한 전처리 파이프라인.
+
+```python
+def preprocess_image(img):
+    """
+    야간 이미지 탐지용 전처리 파이프라인:
+      1. 화이트 밸런스 보정 (Gray World)
+      2. 양방향 필터 노이즈 제거 (엣지 보존)
+      3. CLAHE 대비 강화 (LAB 색공간 L채널만 적용)
+    """
+    img_wb = _white_balance(img)
+    img_bgr = cv2.cvtColor(img_wb, cv2.COLOR_RGB2BGR)
+    denoised = cv2.bilateralFilter(img_bgr, d=9, sigmaColor=75, sigmaSpace=75)
+    lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
+    l, a, b_ch = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_eq = clahe.apply(l)
+    lab_eq = cv2.merge([l_eq, a, b_ch])
+    result_bgr = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+    return cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB)
+```
+
+### 5-8. 프론트엔드 — sessionStorage 기반 상태 전달
 
 ```
 index.html ──── sessionStorage에 이미지/파일명 저장 ────► analysis.html
@@ -272,7 +367,7 @@ gunicorn  →  backend.py 의 app 객체
    │  base64 디코드
    │  YOLO 객체 탐지
    │  휘도·채도·감마 계산
-   │  compute_law_risk() 실행
+   │  compute_fine() 실행
    │  JSON 응답 반환
    │
 [analysis.html]
@@ -295,7 +390,7 @@ gunicorn  →  backend.py 의 app 객체
 ### 법규 위반 판정 로직 정확도
 - 물리 휘도계 측정값 vs 모델 픽셀 분석 추정값 오차율 계산
 - 환경부 조명환경관리구역별 허용 기준치 알고리즘 반영 여부 검증
-- 위반 등급(관찰/주의/고위험) 정확성 확인
+- 위반 단계(1단계/2단계/3단계) 및 과태료 정확성 확인
 
 ### 시스템 통합 테스트
 - 업로드 → 분석 → 결과 전 과정 오류 없는 동작 확인

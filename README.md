@@ -77,6 +77,12 @@ GitHub, Discord, VS Code, Roboflow, Weights & Biases
    
 ⦁ 전체 시스템의 동작을 확인하고 성능을 개선한다.
 
+---
+
+## 적용된 알고리즘 및 기술 상세
+
+본 프로젝트에 적용된 알고리즘과 기술에 대한 상세한 설명은 [Information.md](./Information.md)를 참조하세요.
+
 
 ## 3) 테스트(검증) 계획
 
