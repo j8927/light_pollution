@@ -82,6 +82,7 @@ GitHub, Discord, VS Code, Roboflow, Weights & Biases
 ## 적용된 알고리즘 및 기술 상세 + 만들어진 주소
 
 본 프로젝트에 적용된 알고리즘과 기술에 대한 상세한 설명은 [Information.md](./Information.md)를 참조하세요.
+
 적용된 코드의 웹페이지 주소: https://j8927-light-pollution-ai.hf.space/
 
 
