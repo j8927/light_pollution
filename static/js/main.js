@@ -535,7 +535,7 @@ function analysisPageInit() {
 
 function resultPageInit() {
   syncFooterContact();
-  const { data, file, time } = readSessionImage();
+  const { data, file, size, time } = readSessionImage();
   const resultImage = document.getElementById("resultImage");
   const resultFileName = document.getElementById("resultFileName");
   const resultTime = document.getElementById("resultTime");
@@ -565,6 +565,115 @@ function resultPageInit() {
   const zonesSummary = JSON.parse(sessionStorage.getItem("light_zonesSummary") || "{}");
   const pollutionOverall = sessionStorage.getItem("light_pollutionOverall") || "미탐지";
   const pollutionSummary = JSON.parse(sessionStorage.getItem("light_pollutionSummary") || "{}");
+  const rawGps = (() => {
+    const value = sessionStorage.getItem("light_rawGps");
+    if (!value) return null;
+    try {
+      return JSON.parse(value);
+    } catch (e) {
+      return null;
+    }
+  })();
+  const gpsText = rawGps && typeof rawGps.lat === "number" && typeof rawGps.lon === "number"
+    ? `${rawGps.lat.toFixed(6)}, ${rawGps.lon.toFixed(6)}`
+    : (gpsDetected ? `${zone} (${zoneLabel})` : "미확인");
+
+  function buildReportPayload() {
+    return {
+      fileName: file,
+      fileSize: size,
+      analysisTime: time,
+      generatedAt: new Date().toLocaleString(),
+      overall,
+      totalFineAmount: totalFine,
+      violationCount,
+      riskSummary: riskSum,
+      modelStatus,
+      zone,
+      zoneLabel,
+      gpsDetected,
+      allZonesMode,
+      zonesSummary,
+      pollutionOverall,
+      pollutionSummary,
+      detected,
+      rawGps,
+      gpsText,
+    };
+  }
+
+  function buildTextReport(payload) {
+    const pollutionCountsText = payload.pollutionSummary?.counts
+      ? `침입광 ${payload.pollutionSummary.counts["침입광"] || 0}건, 눈부심 ${payload.pollutionSummary.counts["눈부심"] || 0}건, 산란광 ${payload.pollutionSummary.counts["산란광"] || 0}건, 군집된빛 ${payload.pollutionSummary.counts["군집된빛"] || 0}건`
+      : "-";
+    const detectedText = (payload.detected || []).map((item) => {
+      const stageText = item.violationStage || "준수";
+      const fineText = item.fineAmount > 0 ? `${item.fineAmount}만원` : "없음";
+      const measuredValue = item.measuredValue ?? item.illuminanceLux ?? item.luminanceCdM2 ?? item.brightness ?? "-";
+      const unit = item.unit || (item.type === "가로등" ? "lux" : "cd/m²");
+      return `${item.name || "-"} / ${item.type || "-"} / ${item.pollutionCategory || "미분류"} / ${measuredValue}${typeof measuredValue === "number" ? ` ${unit}` : ""} / ${stageText} / ${fineText}`;
+    }).join("\n");
+    return [
+      "빛 공해 법규 위반 탐지 리포트",
+      `파일: ${payload.fileName}`,
+      `파일 크기: ${payload.fileSize}`,
+      `분석 시간: ${payload.analysisTime}`,
+      `생성 시간: ${payload.generatedAt}`,
+      `종합 판정: ${payload.overall}`,
+      `대표 분류: ${payload.pollutionOverall}`,
+      `조명환경관리구역: ${payload.zone} (${payload.zoneLabel})`,
+      `GPS: ${payload.gpsText}`,
+      `총 과태료: ${payload.totalFineAmount}만원`,
+      `위반 건수: ${payload.violationCount}건`,
+      `모델 상태: ${payload.modelStatus}`,
+      `위험 요약: ${payload.riskSummary}`,
+      `유형별 집계: ${pollutionCountsText}`,
+      `탐지 객체:`,
+      detectedText || "-",
+      "",
+      "법적 참고 기준: 인공조명에 의한 빛공해 방지법, 동 시행령 제8조, 동 시행규칙 별표",
+      "주의: 본 문서는 이미지 기반 추정 분석 결과로, 공식 법적 증빙 시에는 원본 사진과 현장 측정 자료를 함께 제출하십시오.",
+    ].join("\n");
+  }
+
+  function buildPdfFileName(originalFileName) {
+    const baseName = String(originalFileName || "light_pollution_report").trim();
+    const stem = baseName.replace(/\.[^.]+$/, "") || "light_pollution_report";
+    const safeName = stem.replace(/[^\w\-가-힣]+/g, "_").replace(/^_+|_+$/g, "") || "light_pollution_report";
+    return `${safeName}.pdf`;
+  }
+
+  async function downloadReport() {
+    const payload = buildReportPayload();
+    const pdfFileName = buildPdfFileName(payload.fileName);
+    try {
+      const response = await fetch("/api/report/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error(`PDF generation failed: ${response.status}`);
+      }
+      const blob = await response.blob();
+      const link = document.createElement("a");
+      const objectUrl = URL.createObjectURL(blob);
+      link.href = objectUrl;
+      link.download = pdfFileName;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+      return;
+    } catch (err) {
+      console.warn("PDF 리포트 생성 실패, txt로 대체합니다.", err);
+      const link = document.createElement("a");
+      const blob = new Blob([buildTextReport(payload)], { type: "text/plain;charset=utf-8" });
+      const objectUrl = URL.createObjectURL(blob);
+      link.href = objectUrl;
+      link.download = "light_pollution_report.txt";
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
 
   if (summaryOverall) summaryOverall.textContent = allZonesMode ? "종합 판정: GPS 미확인" : `종합 판정: ${overall}`;
   if (summaryBadge) {
@@ -739,17 +848,7 @@ function resultPageInit() {
 
   document.getElementById("redoBtn")?.addEventListener("click", () => { window.location.href = withVersion("/"); });
   document.getElementById("saveBtn")?.addEventListener("click", () => { alert("분석 결과가 저장되었습니다. (더미)"); });
-  document.getElementById("downloadBtn")?.addEventListener("click", () => {
-    const link = document.createElement("a");
-    const pollutionCountsText = pollutionSummary?.counts
-      ? `침입광 ${pollutionSummary.counts["침입광"] || 0}건, 눈부심 ${pollutionSummary.counts["눈부심"] || 0}건, 산란광 ${pollutionSummary.counts["산란광"] || 0}건, 군집된빛 ${pollutionSummary.counts["군집된빛"] || 0}건`
-      : "-";
-    const blob = new Blob([`빛 공해 분석 리포트\n파일: ${file}\n종합 판정: ${overall}\n빛 공해 대표 분류: ${pollutionOverall}\n유형별 집계: ${pollutionCountsText}\n총 과태료: ${totalFine}만원\n위반 건수: ${violationCount}건\n구역: ${zone}(${zoneLabel})\n탐지 객체: ${detected.map((d) => `${d.name}(${d.pollutionCategory || "미분류"})`).join(", ")}`], { type: "text/plain" });
-    link.href = URL.createObjectURL(blob);
-    link.download = "light_pollution_report.txt";
-    link.click();
-    URL.revokeObjectURL(link.href);
-  });
+  document.getElementById("downloadBtn")?.addEventListener("click", downloadReport);
 }
 
 function indexPageInit() {

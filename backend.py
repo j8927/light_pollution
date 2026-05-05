@@ -1,8 +1,9 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_file
 from flask_cors import CORS
 import os
 import base64
 import io
+from datetime import datetime
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
@@ -255,10 +256,8 @@ def classify_by_geometry(x1, y1, x2, y2, img_h, img_w):
     return '조명'
 
 
-def classify_pollution_category(cat, brightness_avg, brightness_p95,
-                                bright_pixel_ratio, saturation, gamma,
-                                x1, y1, x2, y2, img_h, img_w):
-    """탐지 객체를 빛 공해 4대 분류(침입광/눈부심/산란광/군집된빛)로 분류."""
+def _build_pollution_features(x1, y1, x2, y2, img_h, img_w):
+    """분류 알고리즘 공통 입력 특징(면적·가장자리 인접도)을 계산한다."""
     th = POLLUTION_THRESHOLDS
     box_area = max(1, (x2 - x1) * (y2 - y1))
     img_area = max(1, img_h * img_w)
@@ -268,54 +267,134 @@ def classify_pollution_category(cat, brightness_avg, brightness_p95,
     edge_margin_y = min(y1, max(0, img_h - y2)) / max(1, img_h)
     near_edge = edge_margin_x < th['edge_margin'] or edge_margin_y < th['edge_margin']
 
-    # 객체별 점수 계산: 단일 if-else보다 과소/과대 분류를 줄이기 위해 점수 기반 선택
+    return {
+        'area_ratio': area_ratio,
+        'near_edge': near_edge,
+        'is_top_region': y1 <= img_h * 0.25,
+    }
+
+
+def _classify_streetlight_pollution(brightness_avg, brightness_p95,
+                                    bright_pixel_ratio, saturation, gamma,
+                                    features):
+    """가로등 전용 분류: 눈부심/산란광 중심으로 판단한다."""
+    th = POLLUTION_THRESHOLDS
     score = {'침입광': 0.0, '눈부심': 0.0, '산란광': 0.0, '군집된빛': 0.0}
 
-    # 침입광: 경계 인접 + 평균 밝기
-    if near_edge:
-        score['침입광'] += 1.6
-    if brightness_avg >= th['intrusion_avg']:
-        score['침입광'] += 1.0
-    if area_ratio < 0.25:
-        score['침입광'] += 0.4
-
-    # 눈부심: 높은 p95/감마 + 상대적으로 집중된 고광도
+    # 가로등은 지점형 고휘도 광원 특성이 강해 눈부심 가중치를 높인다.
     if brightness_p95 >= th['glare_p95']:
-        score['눈부심'] += 1.9
+        score['눈부심'] += 2.2
     if gamma >= th['glare_gamma']:
-        score['눈부심'] += 1.2
+        score['눈부심'] += 1.4
     if bright_pixel_ratio <= th['glare_ratio_upper']:
-        score['눈부심'] += 0.5
-    if cat == '가로등':
         score['눈부심'] += 0.6
 
-    # 산란광: 큰 영역 + 넓은 밝은 픽셀 분포 + 저채도
-    if area_ratio >= th['scatter_area']:
-        score['산란광'] += 1.7
+    # 상부 대면적 확산 + 저채도는 산란광 특성으로 본다.
+    if features['area_ratio'] >= th['scatter_area']:
+        score['산란광'] += 1.6
     if bright_pixel_ratio >= th['scatter_ratio']:
-        score['산란광'] += 1.3
+        score['산란광'] += 1.5
     if saturation <= th['scatter_sat_max']:
-        score['산란광'] += 0.7
-    if y1 <= img_h * 0.25:
-        score['산란광'] += 0.4
+        score['산란광'] += 0.8
+    if features['is_top_region']:
+        score['산란광'] += 0.5
 
-    # 군집된빛: 간판/조명 중심 + 채도/광밀도
-    if cat in ('간판', '조명'):
-        score['군집된빛'] += 1.2
-    if saturation >= th['cluster_sat']:
-        score['군집된빛'] += 1.1
-    if bright_pixel_ratio >= th['cluster_ratio']:
-        score['군집된빛'] += 0.8
-
-    # 기본 priors
-    if cat == '간판':
-        score['군집된빛'] += 0.6
-    elif cat == '가로등':
-        score['눈부심'] += 0.4
-    else:
-        score['침입광'] += 0.3
+    # 주거 경계 방향(프레임 가장자리) 광원은 침입광 가능성을 올린다.
+    if features['near_edge']:
+        score['침입광'] += 1.4
+    if brightness_avg >= th['intrusion_avg']:
+        score['침입광'] += 0.8
 
     return max(score, key=score.get)
+
+
+def _classify_signboard_pollution(brightness_avg, brightness_p95,
+                                  bright_pixel_ratio, saturation, gamma,
+                                  features):
+    """간판 전용 분류: 군집된빛/침입광 중심으로 판단한다."""
+    th = POLLUTION_THRESHOLDS
+    score = {'침입광': 0.0, '눈부심': 0.0, '산란광': 0.0, '군집된빛': 0.0}
+
+    # 간판은 다수·고채도·고밀도 발광이 군집된빛 특성으로 이어진다.
+    score['군집된빛'] += 1.5
+    if saturation >= th['cluster_sat']:
+        score['군집된빛'] += 1.3
+    if bright_pixel_ratio >= th['cluster_ratio']:
+        score['군집된빛'] += 1.1
+
+    # 건물 외곽/창가 경계에 붙은 밝은 간판은 침입광 가능성이 높다.
+    if features['near_edge']:
+        score['침입광'] += 1.8
+    if brightness_avg >= th['intrusion_avg']:
+        score['침입광'] += 1.0
+    if features['area_ratio'] < 0.25:
+        score['침입광'] += 0.5
+
+    # 고휘도 픽셀 집중이 강하면 눈부심도 함께 평가한다.
+    if brightness_p95 >= th['glare_p95']:
+        score['눈부심'] += 1.2
+    if gamma >= th['glare_gamma']:
+        score['눈부심'] += 0.8
+
+    return max(score, key=score.get)
+
+
+def _classify_decorative_pollution(brightness_avg, brightness_p95,
+                                   bright_pixel_ratio, saturation, gamma,
+                                   features):
+    """장식조명 전용 분류: 군집된빛/산란광/침입광을 균형 평가한다."""
+    th = POLLUTION_THRESHOLDS
+    score = {'침입광': 0.0, '눈부심': 0.0, '산란광': 0.0, '군집된빛': 0.0}
+
+    # 장식조명은 색채/밀도 기반 군집된빛 가능성을 기본 가정으로 둔다.
+    if saturation >= th['cluster_sat']:
+        score['군집된빛'] += 1.3
+    if bright_pixel_ratio >= th['cluster_ratio']:
+        score['군집된빛'] += 1.0
+
+    # 상부 대면적의 저채도 확산 조명은 산란광으로 판단한다.
+    if features['area_ratio'] >= th['scatter_area']:
+        score['산란광'] += 1.6
+    if bright_pixel_ratio >= th['scatter_ratio']:
+        score['산란광'] += 1.2
+    if saturation <= th['scatter_sat_max']:
+        score['산란광'] += 0.8
+    if features['is_top_region']:
+        score['산란광'] += 0.4
+
+    # 경계 인접 + 밝기 높은 장식조명은 침입광 리스크를 가산한다.
+    if features['near_edge']:
+        score['침입광'] += 1.2
+    if brightness_avg >= th['intrusion_avg']:
+        score['침입광'] += 0.9
+
+    # 고휘도 포인트가 강하면 눈부심 후보도 남긴다.
+    if brightness_p95 >= th['glare_p95']:
+        score['눈부심'] += 0.9
+    if gamma >= th['glare_gamma']:
+        score['눈부심'] += 0.6
+
+    return max(score, key=score.get)
+
+
+def classify_pollution_category(cat, brightness_avg, brightness_p95,
+                                bright_pixel_ratio, saturation, gamma,
+                                x1, y1, x2, y2, img_h, img_w):
+    """조명 유형별(가로등/간판/조명)로 분리된 분류 알고리즘을 적용한다."""
+    features = _build_pollution_features(x1, y1, x2, y2, img_h, img_w)
+
+    # 조명 유형별 전용 분류기 라우팅
+    if cat == '가로등':
+        return _classify_streetlight_pollution(
+            brightness_avg, brightness_p95, bright_pixel_ratio, saturation, gamma, features
+        )
+    if cat == '간판':
+        return _classify_signboard_pollution(
+            brightness_avg, brightness_p95, bright_pixel_ratio, saturation, gamma, features
+        )
+    return _classify_decorative_pollution(
+        brightness_avg, brightness_p95, bright_pixel_ratio, saturation, gamma, features
+    )
 
 
 def summarize_pollution_categories(detected):
@@ -520,6 +599,280 @@ def compute_fine(luminance_cd_m2_avg, luminance_cd_m2_max,
     }
 
 
+def _normalize_gps_payload(raw_gps):
+    if isinstance(raw_gps, dict):
+        lat = raw_gps.get('lat')
+        lon = raw_gps.get('lon')
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            return {'lat': float(lat), 'lon': float(lon)}
+    return None
+
+
+def _format_gps_text(raw_gps):
+    gps = _normalize_gps_payload(raw_gps)
+    if not gps:
+        return '미확인'
+    return f"{gps['lat']:.6f}, {gps['lon']:.6f}"
+
+
+def _resolve_pdf_font():
+    """Korean text가 들어간 PDF를 위한 폰트를 우선순위대로 선택한다."""
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.pdfbase.ttfonts import TTFont
+    except ImportError as exc:
+        raise RuntimeError('reportlab 패키지가 설치되어 있지 않습니다.') from exc
+
+    font_candidates = [
+        ('MalgunGothic', r'C:\Windows\Fonts\malgun.ttf'),
+        ('MalgunGothicBold', r'C:\Windows\Fonts\malgunbd.ttf'),
+        ('AppleGothic', '/System/Library/Fonts/Supplemental/AppleGothic.ttf'),
+        ('NanumGothic', '/usr/share/fonts/truetype/nanum/NanumGothic.ttf'),
+        ('NotoSansKR', '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc'),
+    ]
+
+    for font_name, font_path in font_candidates:
+        if os.path.exists(font_path):
+            try:
+                pdfmetrics.registerFont(TTFont(font_name, font_path))
+                return font_name
+            except Exception:
+                continue
+
+    for cid_font in ('HYGoThic-Medium', 'HYSMyeongJo-Medium'):
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont(cid_font))
+            return cid_font
+        except Exception:
+            continue
+
+    return 'Helvetica'
+
+
+def _build_pdf_report_bytes(report_data):
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except ImportError as exc:
+        raise RuntimeError('reportlab 패키지가 설치되어 있지 않습니다.') from exc
+
+    font_name = _resolve_pdf_font()
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
+        title='빛 공해 법규 위반 탐지 리포트',
+        author='Light Pollution AI System',
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name='KrTitle',
+        parent=styles['Title'],
+        fontName=font_name,
+        fontSize=18,
+        leading=22,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor('#12325b'),
+    ))
+    styles.add(ParagraphStyle(
+        name='KrHeading',
+        parent=styles['Heading2'],
+        fontName=font_name,
+        fontSize=11.5,
+        leading=14,
+        spaceBefore=6,
+        spaceAfter=6,
+        textColor=colors.HexColor('#12325b'),
+    ))
+    styles.add(ParagraphStyle(
+        name='KrBody',
+        parent=styles['BodyText'],
+        fontName=font_name,
+        fontSize=9,
+        leading=12,
+    ))
+    styles.add(ParagraphStyle(
+        name='KrNote',
+        parent=styles['BodyText'],
+        fontName=font_name,
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#5c667a'),
+    ))
+
+    def make_table(rows, col_widths=None, header_fill='#1f4e79'):
+        table = Table(rows, colWidths=col_widths, repeatRows=1)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(header_fill)),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, -1), font_name),
+            ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+            ('LEADING', (0, 0), (-1, -1), 10.5),
+            ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#c8d2e3')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor('#f7f9fc')]),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        return table
+
+    def yes_no(flag):
+        return '예' if flag else '아니오'
+
+    detected = list(report_data.get('detected') or [])
+    zone = report_data.get('zone') or '제3종'
+    zone_label = report_data.get('zoneLabel') or ZONE_LABELS.get(zone, zone)
+    gps_text = report_data.get('gpsText') or _format_gps_text(report_data.get('rawGps'))
+    generated_at = report_data.get('generatedAt') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    analysis_time = report_data.get('analysisTime') or generated_at
+    total_fine = int(report_data.get('totalFineAmount') or 0)
+    violation_count = int(report_data.get('violationCount') or 0)
+    overall = report_data.get('overall') or '미탐지'
+    pollution_overall = report_data.get('pollutionOverall') or overall
+    pollution_summary = report_data.get('pollutionSummary') or {}
+    counts = pollution_summary.get('counts') or {}
+    model_status = report_data.get('modelStatus') or MODEL_STATUS
+    file_name = report_data.get('fileName') or '미상'
+    file_size = report_data.get('fileSize') or '-'
+    risk_summary = report_data.get('riskSummary') or '-'
+    all_zones_mode = bool(report_data.get('allZonesMode'))
+
+    summary_rows = [
+        ['항목', '내용', '항목', '내용'],
+        ['파일명', file_name, '파일 크기', file_size],
+        ['분석 시간', analysis_time, '생성 시간', generated_at],
+        ['종합 판정', overall, '총 과태료', f'{total_fine}만원'],
+        ['위반 건수', f'{violation_count}건', '대표 분류', pollution_overall],
+        ['조명환경관리구역', f'{zone} ({zone_label})', 'GPS', gps_text],
+        ['GPS 판별', yes_no(bool(report_data.get('gpsDetected'))), '구역별 시뮬레이션', yes_no(all_zones_mode)],
+        ['모델 상태', model_status, '위험 요약', risk_summary],
+    ]
+
+    story = [
+        Paragraph('빛 공해 법규 위반 탐지 및 판정 리포트', styles['KrTitle']),
+        Spacer(1, 4 * mm),
+        Paragraph('법적 증빙 참고용 자동 생성 문서', styles['KrBody']),
+        Spacer(1, 4 * mm),
+        make_table(summary_rows, col_widths=[26 * mm, 58 * mm, 28 * mm, 58 * mm]),
+        Spacer(1, 5 * mm),
+        Paragraph('법규 적용 기준', styles['KrHeading']),
+        Paragraph(
+            '본 리포트는 인공조명에 의한 빛공해 방지법, 동 시행령 제8조, 동 시행규칙 별표의 조명환경관리구역 기준을 바탕으로 '
+            '이미지 기반 추정값을 평가한 결과입니다. 실제 행정 처분은 관할 기관의 공식 측정 및 현장 확인에 따릅니다.',
+            styles['KrBody'],
+        ),
+        Spacer(1, 3 * mm),
+    ]
+
+    standards_rows = [[
+        '조명환경관리구역', '공간조명·가로등', '광고물·간판', '장식조명·조명'
+    ]]
+    for zc in ('제1종', '제2종', '제3종', '제4종'):
+        light_std = ZONE_STANDARDS['공간조명'][zc]
+        ad_std = ZONE_STANDARDS['광고물'][zc]
+        deco_std = ZONE_STANDARDS['장식조명'][zc]
+        standards_rows.append([
+            f'{zc} {ZONE_LABELS[zc]}',
+            f'{light_std} lux',
+            f'{ad_std} cd/m²',
+            f'{deco_std["avg"]} / {deco_std["max"]} cd/m²',
+        ])
+
+    story.extend([
+        Paragraph('조명환경관리구역별 법규 기준', styles['KrHeading']),
+        make_table(standards_rows, col_widths=[42 * mm, 38 * mm, 34 * mm, 46 * mm], header_fill='#28527a'),
+        Spacer(1, 5 * mm),
+    ])
+
+    if detected:
+        detail_rows = [[
+            '객체명', '유형', '빛 공해 분류', '법규 유형', '측정값', '기준값', '판정', '과태료'
+        ]]
+        for item in detected:
+            unit = item.get('unit') or ('lux' if item.get('type') == '가로등' else 'cd/m²')
+            measured_value = item.get('measuredValue')
+            if measured_value is None:
+                measured_value = item.get('illuminanceLux') if unit == 'lux' else item.get('luminanceCdM2')
+            threshold = item.get('threshold')
+            compliance = item.get('compliance') or '미분류'
+            stage = item.get('violationStage') or '준수'
+            fine_amount = item.get('fineAmount') or 0
+            detail_rows.append([
+                item.get('name') or '-',
+                item.get('type') or '-',
+                f"{item.get('pollutionCategory') or '-'}",
+                item.get('lightType') or '-',
+                f"{measured_value:.1f} {unit}" if isinstance(measured_value, (int, float)) else f'- {unit}',
+                f"{threshold} {unit}" if threshold not in (None, '') else '-',
+                f'{compliance}{" / " + stage if stage != "준수" else ""}',
+                f'{fine_amount}만원' if fine_amount else '없음',
+            ])
+
+        story.extend([
+            Paragraph('탐지 객체별 상세 분석', styles['KrHeading']),
+            make_table(detail_rows, col_widths=[20 * mm, 16 * mm, 20 * mm, 18 * mm, 20 * mm, 20 * mm, 22 * mm, 18 * mm], header_fill='#6b4f2a'),
+            Spacer(1, 4 * mm),
+        ])
+    else:
+        story.extend([
+            Paragraph('탐지 객체별 상세 분석', styles['KrHeading']),
+            Paragraph('광원 객체가 탐지되지 않아 세부 위반 항목은 산출되지 않았습니다.', styles['KrBody']),
+            Spacer(1, 4 * mm),
+        ])
+
+    counts_text = ', '.join([
+        f'침입광 {counts.get("침입광", 0)}건',
+        f'눈부심 {counts.get("눈부심", 0)}건',
+        f'산란광 {counts.get("산란광", 0)}건',
+        f'군집된빛 {counts.get("군집된빛", 0)}건',
+    ])
+    story.extend([
+        Paragraph('종합 해석', styles['KrHeading']),
+        Paragraph(
+            f'대표 분류는 {pollution_overall}이며, 유형별 집계는 {counts_text}입니다. 총 과태료는 {total_fine}만원, 위반 건수는 {violation_count}건입니다.',
+            styles['KrBody'],
+        ),
+        Spacer(1, 2 * mm),
+        Paragraph(
+            '주의: 본 문서는 이미지 기반 추정 분석 결과를 시각화한 참고 리포트입니다. 법적 증빙으로 활용 시에는 '
+            '현장 측정 기록, 촬영 원본, 위치 정보, 관할 기관의 공식 판정 자료와 함께 제출하는 것을 권장합니다.',
+            styles['KrNote'],
+        ),
+    ])
+
+    def draw_footer(canvas, doc_obj):
+        canvas.saveState()
+        canvas.setFont(font_name, 8)
+        canvas.setFillColor(colors.HexColor('#6b7280'))
+        canvas.drawString(doc_obj.leftMargin, 10 * mm, '인공조명에 의한 빛공해 방지법 · 시행령 제8조 · 시행규칙 별표 기준 참고')
+        canvas.drawRightString(A4[0] - doc_obj.rightMargin, 10 * mm, f'Page {canvas.getPageNumber()}')
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
+    buffer.seek(0)
+    return buffer
+
+
+def _build_pdf_report_filename(report_data):
+    base_name = (report_data.get('fileName') or 'light_pollution_report').strip()
+    base_name = os.path.splitext(base_name)[0] or 'light_pollution_report'
+    safe_name = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in base_name)
+    safe_name = safe_name.strip('_') or 'light_pollution_report'
+    return f'{safe_name}.pdf'
+
+
 # ---- Flask 라우트 ----
 @app.route('/')
 def home():
@@ -536,6 +889,47 @@ def analysis_page():
 @app.route('/result.html')
 def result_page():
     return render_template('result.html')
+
+
+@app.route('/api/status', methods=['GET'])
+def api_status():
+    return jsonify({
+        'status': 'success',
+        'modelStatus': MODEL_STATUS,
+        'pdfReportAvailable': True,
+        'supportedFormats': ['json', 'pdf'],
+        'features': {
+            'pollutionCategories': list(POLLUTION_TYPES.keys()),
+            'zoneTypes': list(ZONE_LABELS.keys()),
+            'lawReferences': [
+                '인공조명에 의한 빛공해 방지법',
+                '인공조명에 의한 빛공해 방지법 시행령 제8조',
+                '인공조명에 의한 빛공해 방지법 시행규칙 별표',
+            ],
+        },
+    })
+
+
+@app.route('/api/report/pdf', methods=['POST'])
+def api_report_pdf():
+    report_data = request.get_json(silent=True) or {}
+    if not report_data:
+        return jsonify({'status': 'error', 'message': 'No report data provided.'}), 400
+
+    try:
+        pdf_buffer = _build_pdf_report_bytes(report_data)
+        filename = _build_pdf_report_filename(report_data)
+    except RuntimeError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
+    except Exception as exc:
+        return jsonify({'status': 'error', 'message': f'PDF 생성 실패: {exc}'}), 500
+
+    return send_file(
+        pdf_buffer,
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename,
+    )
 
 
 def decode_base64_image(data_url):
