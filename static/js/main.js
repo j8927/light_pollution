@@ -847,7 +847,6 @@ function resultPageInit() {
   }
 
   document.getElementById("redoBtn")?.addEventListener("click", () => { window.location.href = withVersion("/"); });
-  document.getElementById("saveBtn")?.addEventListener("click", () => { alert("분석 결과가 저장되었습니다. (더미)"); });
   document.getElementById("downloadBtn")?.addEventListener("click", downloadReport);
 }
 
