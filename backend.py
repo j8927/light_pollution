@@ -3,6 +3,7 @@ from flask_cors import CORS
 import os
 import base64
 import io
+import math
 from datetime import datetime
 import cv2
 import numpy as np
@@ -43,6 +44,66 @@ COCO_TO_KR = {
 }
 
 DIRECT_LIGHT_CLASSES = {'간판', '가로등', '조명', '구조물', '사람', '차량'}
+
+# 촬영 조건별 보정 프로필
+CAMERA_PROFILES = {
+    'smartphone': {
+        'label': '스마트폰 기본',
+        'iso_ref': 100.0,
+        'exposure_ref_ms': 12.0,
+        'brightness_bias': 1.00,
+        'glare_bias': 1.02,
+        'angle_power': 0.82,
+    },
+    'iphone': {
+        'label': '아이폰 계열',
+        'iso_ref': 80.0,
+        'exposure_ref_ms': 10.0,
+        'brightness_bias': 0.98,
+        'glare_bias': 1.00,
+        'angle_power': 0.80,
+    },
+    'galaxy': {
+        'label': '갤럭시 계열',
+        'iso_ref': 90.0,
+        'exposure_ref_ms': 11.0,
+        'brightness_bias': 1.00,
+        'glare_bias': 1.03,
+        'angle_power': 0.83,
+    },
+    'dslr': {
+        'label': '디지털카메라/DSLR',
+        'iso_ref': 200.0,
+        'exposure_ref_ms': 20.0,
+        'brightness_bias': 0.95,
+        'glare_bias': 0.97,
+        'angle_power': 0.76,
+    },
+    'action': {
+        'label': '액션캠/드론',
+        'iso_ref': 160.0,
+        'exposure_ref_ms': 16.0,
+        'brightness_bias': 1.06,
+        'glare_bias': 1.08,
+        'angle_power': 0.90,
+    },
+    'cctv': {
+        'label': 'CCTV/고정형',
+        'iso_ref': 140.0,
+        'exposure_ref_ms': 18.0,
+        'brightness_bias': 1.08,
+        'glare_bias': 1.10,
+        'angle_power': 0.88,
+    },
+    'default': {
+        'label': '기본값',
+        'iso_ref': 100.0,
+        'exposure_ref_ms': 12.0,
+        'brightness_bias': 1.00,
+        'glare_bias': 1.00,
+        'angle_power': 0.82,
+    },
+}
 
 # YOLO 탐지 카테고리 → 조명 법규 유형 매핑
 LIGHT_TYPE_MAP = {
@@ -96,6 +157,88 @@ def should_keep_detection(obj):
         obj.get('brightnessP95', 0) >= th['min_p95'] or
         obj.get('brightPixelRatio', 0.0) >= th['min_bright_ratio']
     )
+
+
+def _clamp(value, min_value, max_value):
+    return max(min_value, min(max_value, value))
+
+
+def _parse_float(value, default):
+    try:
+        parsed = float(value)
+        if math.isnan(parsed) or math.isinf(parsed):
+            return default
+        return parsed
+    except (TypeError, ValueError):
+        return default
+
+
+def build_capture_context(payload):
+    """카메라 기종/ISO/노출/각도에 따른 밝기 보정 계수를 계산한다."""
+    model_key = str(payload.get('cameraModel') or 'default').strip().lower()
+    profile = CAMERA_PROFILES.get(model_key, CAMERA_PROFILES['default'])
+    iso = _clamp(_parse_float(payload.get('iso'), profile['iso_ref']), 50.0, 12800.0)
+    exposure_ms = _clamp(_parse_float(payload.get('exposureMs'), profile['exposure_ref_ms']), 1.0, 2000.0)
+    angle_deg = _clamp(_parse_float(payload.get('angleDeg'), 0.0), 0.0, 80.0)
+
+    iso_scale = profile['iso_ref'] / iso
+    exposure_scale = math.sqrt(profile['exposure_ref_ms'] / exposure_ms)
+    angle_radians = math.radians(angle_deg)
+    angle_scale = 1.0 / max(0.55, math.cos(angle_radians) ** profile['angle_power'])
+
+    brightness_scale = _clamp(
+        profile['brightness_bias'] * iso_scale * exposure_scale * angle_scale,
+        0.55,
+        2.40,
+    )
+    glare_scale = _clamp(profile['glare_bias'] * (0.92 + 0.08 * angle_scale), 0.85, 1.25)
+    pixel_ratio_scale = _clamp(1.0 / max(0.82, brightness_scale ** 0.35), 0.74, 1.12)
+
+    return {
+        'cameraModel': model_key if model_key in CAMERA_PROFILES else 'default',
+        'cameraLabel': profile['label'],
+        'iso': round(iso, 1),
+        'exposureMs': round(exposure_ms, 1),
+        'angleDeg': round(angle_deg, 1),
+        'brightnessScale': round(brightness_scale, 3),
+        'glareScale': round(glare_scale, 3),
+        'pixelRatioScale': round(pixel_ratio_scale, 3),
+        'locationMode': str(payload.get('locationMode', 'auto')).lower(),
+        'locationZone': str(payload.get('locationZone', '제3종')),
+    }
+
+
+def apply_capture_adjustment(metrics, capture_context):
+    """촬영 조건에 맞게 ROI 밝기와 법규 판정용 값을 정규화한다."""
+    brightness_scale = capture_context.get('brightnessScale', 1.0)
+    glare_scale = capture_context.get('glareScale', 1.0)
+    pixel_ratio_scale = capture_context.get('pixelRatioScale', 1.0)
+
+    adjusted_brightness = _clamp(metrics['brightness'] * brightness_scale, 0.0, 255.0)
+    adjusted_brightness_p95 = _clamp(metrics['brightness_p95'] * brightness_scale * glare_scale, 0.0, 255.0)
+    adjusted_brightness_max = _clamp(metrics['brightness_max'] * brightness_scale * glare_scale, 0.0, 255.0)
+    adjusted_bright_pixel_ratio = _clamp(metrics['bright_pixel_ratio'] * pixel_ratio_scale, 0.0, 100.0)
+    adjusted_saturation = _clamp(metrics['saturation'] * (1.0 / max(0.92, brightness_scale ** 0.18)), 0.0, 1.0)
+    adjusted_gamma = _clamp(metrics['gamma'] * (0.98 + 0.04 * min(1.0, capture_context.get('angleDeg', 0.0) / 45.0)), 1.0, 3.5)
+
+    adjusted_luminance_avg = estimate_luminance_cd_m2(adjusted_brightness)
+    adjusted_luminance_max = estimate_luminance_cd_m2(adjusted_brightness_max)
+    adjusted_illuminance_avg = estimate_illuminance_lux(adjusted_brightness)
+    adjusted_illuminance_max = estimate_illuminance_lux(adjusted_brightness_max)
+
+    return {
+        'raw': metrics,
+        'brightness': adjusted_brightness,
+        'brightness_p95': adjusted_brightness_p95,
+        'brightness_max': adjusted_brightness_max,
+        'bright_pixel_ratio': adjusted_bright_pixel_ratio,
+        'saturation': adjusted_saturation,
+        'gamma': adjusted_gamma,
+        'luminance_cd_m2_avg': adjusted_luminance_avg,
+        'luminance_cd_m2_max': adjusted_luminance_max,
+        'illuminance_lux_avg': adjusted_illuminance_avg,
+        'illuminance_lux_max': adjusted_illuminance_max,
+    }
 
 # ---- 조명환경관리구역 구분 (인공조명에 의한 빛공해 방지법 시행규칙) ----
 ZONE_LABELS = {
@@ -748,6 +891,12 @@ def _build_pdf_report_bytes(report_data):
     file_size = report_data.get('fileSize') or '-'
     risk_summary = report_data.get('riskSummary') or '-'
     all_zones_mode = bool(report_data.get('allZonesMode'))
+    capture_summary = report_data.get('captureSummary') or '-'
+    capture_context = report_data.get('captureContext') or {}
+    capture_label = capture_context.get('cameraLabel') or '-'
+    capture_iso = capture_context.get('iso') if capture_context.get('iso') is not None else '-'
+    capture_exposure = capture_context.get('exposureMs') if capture_context.get('exposureMs') is not None else '-'
+    capture_angle = capture_context.get('angleDeg') if capture_context.get('angleDeg') is not None else '-'
 
     summary_rows = [
         ['항목', '내용', '항목', '내용'],
@@ -758,6 +907,8 @@ def _build_pdf_report_bytes(report_data):
         ['조명환경관리구역', f'{zone} ({zone_label})', 'GPS', gps_text],
         ['GPS 판별', yes_no(bool(report_data.get('gpsDetected'))), '구역별 시뮬레이션', yes_no(all_zones_mode)],
         ['모델 상태', model_status, '위험 요약', risk_summary],
+        ['촬영 조건', capture_summary, '보정 기종', capture_label],
+        ['ISO / 노출', f'{capture_iso} / {capture_exposure} ms', '촬영 각도', f'{capture_angle}°'],
     ]
 
     story = [
@@ -957,22 +1108,37 @@ def analyze_api():
     except Exception as e:
         return jsonify({'status': 'error', 'message': f'Image decode failed: {e}'}), 400
 
-    # 1. EXIF GPS로 지역 자동 판별
-    # JS에서 canvas 압축 시 EXIF가 제거되므로, 프론트가 미리 추출한 좌표를 우선 사용
-    req_lat = data.get('gpsLat')
-    req_lon = data.get('gpsLon')
-    if req_lat is not None and req_lon is not None:
-        try:
-            gps_coords = (float(req_lat), float(req_lon))
-        except (TypeError, ValueError):
-            gps_coords = None
-    else:
-        gps_coords = extract_gps_from_exif(raw_bytes)
-    zone_code = get_zone_from_gps(*gps_coords) if gps_coords else None
-
-    # 2. GPS 없을 때는 항상 4개 구역 전체 시뮬레이션
-    all_zones_mode = False
+    # 1. 위치 정보 처리
+    # 우선순위: 수동선택 > GPS EXIF > 자동감지된 카메라 기종 기본값
+    zone_code = None
+    gps_coords = None
+    
+    # 수동 선택된 위치 확인
+    location_mode = data.get('locationMode', 'auto')
+    location_zone = data.get('locationZone', '')
+    if location_mode == 'manual' and location_zone:
+        zone_code = normalize_zone_code(location_zone)
+    
+    # GPS 정보 추출 (수동선택이 없는 경우만)
     if not zone_code:
+        req_lat = data.get('gpsLat')
+        req_lon = data.get('gpsLon')
+        if req_lat is not None and req_lon is not None:
+            try:
+                gps_coords = (float(req_lat), float(req_lon))
+            except (TypeError, ValueError):
+                gps_coords = None
+        else:
+            gps_coords = extract_gps_from_exif(raw_bytes)
+        zone_code = get_zone_from_gps(*gps_coords) if gps_coords else None
+    
+    capture_context = build_capture_context(data)
+
+    # 2. GPS와 위치 선택 모두 없을 때만 4개 구역 전체 시뮬레이션
+    # 사용자가 수동으로 지역을 선택했으면 all_zones_mode는 False (우선순위 존중)
+    all_zones_mode = False
+    if location_mode != 'manual' and not zone_code:
+        # 자동감지 모드이면서 GPS도 없는 경우에만 all_zones_mode 활성화
         all_zones_mode = True
         zone_code = '제3종'  # 탐지 필터링용 임시값
 
@@ -1002,6 +1168,20 @@ def analyze_api():
                  luminance_cd_m2_max, illuminance_lux_max,
                  brightness_p95, bright_pixel_ratio) = analyze_region_metrics(cropped)
 
+                raw_metrics = {
+                    'brightness': brightness,
+                    'brightness_p95': brightness_p95,
+                    'brightness_max': float(np.max(cv2.cvtColor(cropped, cv2.COLOR_RGB2GRAY))),
+                    'bright_pixel_ratio': bright_pixel_ratio,
+                    'saturation': saturation,
+                    'gamma': gamma,
+                    'luminance_cd_m2_avg': luminance_cd_m2_avg,
+                    'luminance_cd_m2_max': luminance_cd_m2_max,
+                    'illuminance_lux_avg': illuminance_lux_avg,
+                    'illuminance_lux_max': illuminance_lux_max,
+                }
+                adjusted_metrics = apply_capture_adjustment(raw_metrics, capture_context)
+
                 # 카테고리 분류
                 if label in DIRECT_LIGHT_CLASSES:
                     cat = label
@@ -1012,22 +1192,23 @@ def analyze_api():
 
                 light_type = LIGHT_TYPE_MAP.get(cat, '장식조명')
                 pollution_category = classify_pollution_category(
-                    cat, brightness, brightness_p95,
-                    bright_pixel_ratio, saturation, gamma,
+                    cat,
+                    adjusted_metrics['brightness'], adjusted_metrics['brightness_p95'],
+                    adjusted_metrics['bright_pixel_ratio'], adjusted_metrics['saturation'], adjusted_metrics['gamma'],
                     x1, y1, x2, y2, h, w
                 )
                 if all_zones_mode:
                     zone_results = {
-                        zc: compute_fine(luminance_cd_m2_avg, luminance_cd_m2_max,
-                                         illuminance_lux_max, light_type, zc)
+                        zc: compute_fine(adjusted_metrics['luminance_cd_m2_avg'], adjusted_metrics['luminance_cd_m2_max'],
+                                         adjusted_metrics['illuminance_lux_max'], light_type, zc)
                         for zc in ('제1종', '제2종', '제3종', '제4종')
                     }
                     fine = zone_results['제3종']  # 오버레이 표시용 기본값
                 else:
                     zone_results = None
                     fine = compute_fine(
-                        luminance_cd_m2_avg, luminance_cd_m2_max,
-                        illuminance_lux_max, light_type, zone_code
+                        adjusted_metrics['luminance_cd_m2_avg'], adjusted_metrics['luminance_cd_m2_max'],
+                        adjusted_metrics['illuminance_lux_max'], light_type, zone_code
                     )
 
                 detected.append({
@@ -1035,15 +1216,24 @@ def analyze_api():
                     'type':             cat,
                     'lightType':        light_type,
                     'confidence':       round(conf, 3),
-                    'brightness':       int(brightness),
-                    'luminanceCdM2':    round(luminance_cd_m2_avg, 1),
-                    'luminanceCdM2Max': round(luminance_cd_m2_max, 1),
-                    'illuminanceLux':   round(illuminance_lux_avg, 1),
-                    'illuminanceLuxMax':round(illuminance_lux_max, 1),
-                    'brightnessP95':    round(brightness_p95, 1),
-                    'brightPixelRatio': round(bright_pixel_ratio, 1),
-                    'saturation':       round(saturation, 2),
-                    'gamma':            round(gamma, 2),
+                    'brightness':       int(round(adjusted_metrics['brightness'])),
+                    'rawBrightness':    int(round(brightness)),
+                    'luminanceCdM2':    round(adjusted_metrics['luminance_cd_m2_avg'], 1),
+                    'rawLuminanceCdM2': round(luminance_cd_m2_avg, 1),
+                    'luminanceCdM2Max': round(adjusted_metrics['luminance_cd_m2_max'], 1),
+                    'rawLuminanceCdM2Max': round(luminance_cd_m2_max, 1),
+                    'illuminanceLux':   round(adjusted_metrics['illuminance_lux_avg'], 1),
+                    'rawIlluminanceLux': round(illuminance_lux_avg, 1),
+                    'illuminanceLuxMax':round(adjusted_metrics['illuminance_lux_max'], 1),
+                    'rawIlluminanceLuxMax': round(illuminance_lux_max, 1),
+                    'brightnessP95':    round(adjusted_metrics['brightness_p95'], 1),
+                    'rawBrightnessP95': round(brightness_p95, 1),
+                    'brightPixelRatio': round(adjusted_metrics['bright_pixel_ratio'], 1),
+                    'rawBrightPixelRatio': round(bright_pixel_ratio, 1),
+                    'saturation':       round(adjusted_metrics['saturation'], 2),
+                    'rawSaturation':    round(saturation, 2),
+                    'gamma':            round(adjusted_metrics['gamma'], 2),
+                    'rawGamma':         round(gamma, 2),
                     'pollutionCategory': pollution_category,
                     'pollutionCategoryDesc': POLLUTION_TYPES[pollution_category],
                     'measurementNote':  'cd/m², lux 값은 이미지 기반 참고용 추정치입니다.',
@@ -1057,6 +1247,12 @@ def analyze_api():
                     'basis':            fine['basis'],
                     'ratio':            fine['ratio'],
                     'zoneResults':      zone_results,
+                    'captureContext':   capture_context,
+                    'captureApplied':   {
+                        'brightnessScale': capture_context['brightnessScale'],
+                        'glareScale': capture_context['glareScale'],
+                        'pixelRatioScale': capture_context['pixelRatioScale'],
+                    },
                     'box': {
                         'x':      int(max(0, x1 / w * 100)),
                         'y':      int(max(0, y1 / h * 100)),
@@ -1101,6 +1297,7 @@ def analyze_api():
             'zonesSummary':  zones_summary,
             'overallPollutionCategory': pollution_summary['overall'],
             'pollutionCategorySummary': pollution_summary,
+            'captureContext': capture_context,
             'avgBrightness': int(np.mean(gray_img)),
             'model':         MODEL_STATUS,
             'detectionSource': 'none',
@@ -1134,6 +1331,7 @@ def analyze_api():
         'zonesSummary':     zones_summary,
         'overallPollutionCategory': pollution_summary['overall'],
         'pollutionCategorySummary': pollution_summary,
+        'captureContext':   capture_context,
         'model':            MODEL_STATUS,
         'detectionSource':  'yolo',
     })
