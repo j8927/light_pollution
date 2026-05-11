@@ -65,10 +65,8 @@
           </div>
           <div class="upload-actions">
             <input type="file" id="uploadInput" accept="image/jpeg,image/png" hidden />
-            <button class="btn btn-primary" id="uploadBtn">파일 선택</button>
-            <p class="upload-note">또는 파일을 여기로 드래그하세요.</p>
             <div class="capture-settings">
-              <div class="capture-settings-title">촬영 조건 입력</div>
+              <div class="capture-settings-title">자동 적용되는 촬영 조건</div>
               
               <!-- 자동 감지 정보 표시 -->
               <div id="exifDetectionInfo" style="display:none; background:#e3f2fd; padding:12px; border-radius:6px; margin-bottom:12px; font-size:0.9rem; border-left:4px solid #2196f3;">
@@ -77,70 +75,33 @@
                 </div>
                 <div id="detectedCameraModel" style="margin-bottom:4px;">카메라: <span id="detectedCameraModelText" style="color:#1976d2; font-weight:500;">-</span></div>
                 <div id="detectedGpsInfo" style="margin-bottom:4px;">위치: <span id="detectedGpsText" style="color:#1976d2; font-weight:500;">-</span></div>
-                <small style="color:#666;">자동 감지 정보를 사용하거나 아래에서 수동으로 수정할 수 있습니다.</small>
+                <div id="detectedCaptureText" style="color:#666; margin-top:4px;">촬영 조건도 EXIF 기본 정보로 자동 설정됩니다.</div>
               </div>
               
               <div class="capture-grid">
-                <label class="field-group">
+                <div class="field-group">
                   <span>카메라 기종</span>
-                  <div style="display:flex; gap:6px; align-items:center;">
-                    <select id="cameraModel">
-                      <option value="smartphone">스마트폰 기본</option>
-                      <option value="iphone">아이폰 계열</option>
-                      <option value="galaxy">갤럭시 계열</option>
-                      <option value="dslr">디지털카메라/DSLR</option>
-                      <option value="action">액션캠/드론</option>
-                      <option value="cctv">CCTV/고정형</option>
-                    </select>
-                    <small id="cameraAutoDetectBadge" style="background:#4caf50; color:white; padding:4px 8px; border-radius:3px; font-size:0.75rem; display:none; white-space:nowrap;">자동감지</small>
-                  </div>
-                </label>
-                <label class="field-group">
+                  <div class="capture-auto-value" id="autoCameraModel">카메라 기종, ISO, 노출 시간, 촬영 각도, 위치 정보 자동 감지 후 적용</div>
+                </div>
+                <div class="field-group">
                   <span>ISO</span>
-                  <input type="number" id="cameraIso" min="50" max="12800" step="1" value="100" />
-                </label>
-                <label class="field-group">
+                  <div class="capture-auto-value" id="autoCameraIso">-</div>
+                </div>
+                <div class="field-group">
                   <span>노출 시간(ms)</span>
-                  <input type="number" id="cameraExposure" min="1" max="2000" step="1" value="12" />
-                </label>
-                <label class="field-group">
+                  <div class="capture-auto-value" id="autoCameraExposure">-</div>
+                </div>
+                <div class="field-group">
                   <span>촬영 각도(°)</span>
-                  <select id="cameraAngle">
-                    <option value="0">0° 정면</option>
-                    <option value="15">15°</option>
-                    <option value="30">30°</option>
-                    <option value="45">45°</option>
-                    <option value="60">60°</option>
-                  </select>
-                </label>
+                  <div class="capture-auto-value" id="autoCameraAngle">-</div>
+                </div>
+                <div class="field-group">
+                  <span>위치 정보</span>
+                  <div class="capture-auto-value" id="autoLocationZone">-</div>
+                </div>
               </div>
               
-              <!-- 위치 정보 선택 -->
-              <div style="margin-top:12px; padding:12px; background:#f5f5f5; border-radius:6px;">
-                <label class="field-group">
-                  <span><strong>위치 정보</strong></span>
-                  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                    <input type="radio" id="locationAuto" name="location" value="auto" checked style="cursor:pointer; margin:0;" />
-                    <label for="locationAuto" style="margin:0; cursor:pointer; display:flex; align-items:center; gap:4px;">
-                      <span>자동감지 (EXIF GPS)</span>
-                      <small id="locationAutoStatus" style="color:#999;">EXIF에 GPS 정보가 없으면 사용자 입력 필요</small>
-                    </label>
-                  </div>
-                  <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-                    <input type="radio" id="locationManual" name="location" value="manual" style="cursor:pointer; margin:0;" />
-                    <label for="locationManual" style="margin:0; cursor:pointer;">수동 선택</label>
-                  </div>
-                  <select id="locationZone" style="display:none; margin-top:8px; width:100%;">
-                    <option value="">선택하세요</option>
-                    <option value="제1종">제1종 자연환경 보존지역</option>
-                    <option value="제2종">제2종 농림지역</option>
-                    <option value="제3종" selected>제3종 주거지역</option>
-                    <option value="제4종">제4종 상업·공업지역</option>
-                  </select>
-                </label>
-              </div>
-              
-              <p class="capture-note">ISO·노출·각도·위치 정보를 함께 입력하면 촬영 조건 차이를 보정해 밝기와 4대 유형 분류를 더 안정적으로 비교할 수 있습니다.</p>
+              <p class="capture-note">이미지 업로드 후 EXIF 정보에서 자동으로 촬영 조건과 위치 정보를 감지하여 적용합니다.</p>
             </div>
           </div>
         </div>
@@ -170,6 +131,32 @@
         </div>
       </section>
     </main>
+
+    <!-- 이미지 미리보기 모달 -->
+    <div id="imagePreviewModal" class="modal hidden">
+      <div class="preview-modal-content">
+        <div class="preview-modal-header">
+          <h3>업로드된 이미지 확인</h3>
+          <button id="closePreviewBtn" class="btn btn-secondary" style="width:auto; height:36px;">닫기</button>
+        </div>
+        <div class="preview-modal-body">
+          <div class="preview-image-container">
+            <img id="previewImageDisplay" src="" alt="업로드된 이미지" />
+          </div>
+          <div class="preview-info-section">
+            <div class="preview-exif-status" id="previewExifStatus">
+              <div class="status-title">EXIF 정보 감지</div>
+              <div class="status-content">
+                <div id="previewExifResult">-</div>
+              </div>
+            </div>
+            <div class="preview-controls">
+              <button id="analyzeBtn" class="btn btn-primary" style="width:100%;">분석 시작</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div id="policyModal" class="modal hidden">
       <div class="modal-content">
