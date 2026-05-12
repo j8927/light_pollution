@@ -20,7 +20,17 @@ const CONTACT_INFO = {
   address: "동아대학교 승학캠퍼스"
 };
 
-const PAGE_VERSION = "20260316-10";
+const CAMERA_MODEL_LABELS = {
+  smartphone: "스마트폰 기본",
+  iphone: "아이폰 계열",
+  galaxy: "갤럭시 계열",
+  dslr: "디지털카메라/DSLR",
+  action: "액션캠/드론",
+  cctv: "CCTV/고정형",
+  default: "기본값"
+};
+
+const PAGE_VERSION = "20260511-1";
 
 function withVersion(path) {
   const sep = path.includes("?") ? "&" : "?";
@@ -49,6 +59,165 @@ function syncFooterContact() {
 
 function getRandomSampleImage() {
   return sampleImages[Math.floor(Math.random() * sampleImages.length)];
+}
+
+function readCaptureSettings() {
+  const cameraModel = sessionStorage.getItem("light_cameraModel") || "smartphone";
+  const iso = Number(sessionStorage.getItem("light_cameraIso") || "100");
+  const exposureMs = Number(sessionStorage.getItem("light_cameraExposure") || "12");
+  const angleDeg = Number(sessionStorage.getItem("light_cameraAngle") || "0");
+  const locationMode = sessionStorage.getItem("light_locationMode") || "auto";
+  const locationZone = sessionStorage.getItem("light_locationZone") || "제3종";
+  
+  return {
+    cameraModel,
+    cameraLabel: CAMERA_MODEL_LABELS[cameraModel] || CAMERA_MODEL_LABELS.default,
+    iso: Number.isFinite(iso) ? iso : 100,
+    exposureMs: Number.isFinite(exposureMs) ? exposureMs : 12,
+    angleDeg: Number.isFinite(angleDeg) ? angleDeg : 0,
+    locationMode,
+    locationZone,
+  };
+}
+
+function saveCaptureSettings() {
+  const capture = readCaptureSettings();
+  sessionStorage.setItem("light_cameraModel", capture.cameraModel);
+  sessionStorage.setItem("light_cameraLabel", capture.cameraLabel);
+  sessionStorage.setItem("light_cameraIso", String(capture.iso));
+  sessionStorage.setItem("light_cameraExposure", String(capture.exposureMs));
+  sessionStorage.setItem("light_cameraAngle", String(capture.angleDeg));
+  sessionStorage.setItem("light_locationMode", capture.locationMode);
+  sessionStorage.setItem("light_locationZone", capture.locationZone);
+  return capture;
+}
+
+function formatCaptureSummary(capture) {
+  if (!capture) return "-";
+  const cameraLabel = capture.cameraLabel || CAMERA_MODEL_LABELS[capture.cameraModel] || capture.cameraModel || "-";
+  const zoneMap = {
+    '제1종': '제1종 자연환경보존지역',
+    '제2종': '제2종 농림지역',
+    '제3종': '제3종 주거지역',
+    '제4종': '제4종 상업공업지역'
+  };
+  const locationText = `위치: ${zoneMap[capture.locationZone] || capture.locationZone || '제3종 주거지역'}`;
+  return `${cameraLabel} · ISO ${capture.iso} · ${capture.exposureMs}ms · ${capture.angleDeg}° · ${locationText}`;
+}
+
+/**
+ * JPEG ArrayBuffer에서 EXIF 카메라 모델명을 파싱합니다.
+ * 추출된 모델명을 알려진 카메라 기종으로 자동 매핑합니다.
+ * @returns {{model: string, cameraKey: string}|null} model: 원본 모델명, cameraKey: 매핑된 기종 키
+ */
+function extractCameraModelFromArrayBuffer(buffer) {
+  try {
+    const dv = new DataView(buffer);
+    // JPEG 시그니처 확인
+    if (dv.getUint16(0, false) !== 0xFFD8) return null;
+
+    let offset = 2;
+    let tiffStart = -1;
+    let isLittleEndian = false;
+    let exifIfdOffset = -1;
+    let model = null;
+    let cameraKey = 'smartphone';
+    let iso = 100;
+    let exposureMs = 12;
+
+    function bytesPerComponent(format) {
+      return ({ 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 }[format] || 1);
+    }
+
+    function readEntryValue(entryOffset, format, components) {
+      const size = bytesPerComponent(format) * Math.max(1, components || 1);
+      const valueOffset = size <= 4 ? entryOffset + 8 : tiffStart + dv.getUint32(entryOffset + 8, isLittleEndian);
+      if (format === 2) {
+        const bytes = new Uint8Array(buffer, valueOffset, Math.min(components || 0, 128));
+        return String.fromCharCode(...bytes).split('\0')[0].trim();
+      }
+      if (format === 3) return dv.getUint16(valueOffset, isLittleEndian);
+      if (format === 4) return dv.getUint32(valueOffset, isLittleEndian);
+      if (format === 5) {
+        const num = dv.getUint32(valueOffset, isLittleEndian);
+        const den = dv.getUint32(valueOffset + 4, isLittleEndian);
+        return den === 0 ? 0 : num / den;
+      }
+      return null;
+    }
+
+    // APP1 마커(0xFFE1)에서 EXIF 탐색
+    while (offset + 4 <= dv.byteLength) {
+      if (dv.getUint8(offset) !== 0xFF) break;
+      const marker = dv.getUint8(offset + 1);
+      const segLen = dv.getUint16(offset + 2, false);
+      if (marker === 0xE1 && offset + 10 <= dv.byteLength) {
+        if (dv.getUint8(offset+4)===0x45 && dv.getUint8(offset+5)===0x78 &&
+            dv.getUint8(offset+6)===0x69 && dv.getUint8(offset+7)===0x66) {
+          tiffStart = offset + 10;
+          break;
+        }
+      }
+      offset += 2 + segLen;
+    }
+    if (tiffStart < 0) return null;
+
+    const byteOrder = dv.getUint16(tiffStart, false);
+    isLittleEndian = (byteOrder === 0x4949);
+
+    const ifd0Offset = dv.getUint32(tiffStart + 4, isLittleEndian);
+    const ifd0Abs = tiffStart + ifd0Offset;
+    const ifd0Count = dv.getUint16(ifd0Abs, isLittleEndian);
+
+    // IFD0에서 Model 태그(0x0110) 탐색
+    for (let i = 0; i < ifd0Count; i++) {
+      const e = ifd0Abs + 2 + i * 12;
+      const tag = dv.getUint16(e, isLittleEndian);
+      if (tag === 0x0110) { // Model tag
+        const format = dv.getUint16(e + 2, isLittleEndian);
+        const components = dv.getUint32(e + 4, isLittleEndian);
+        if (format === 2) {
+          model = readEntryValue(e, format, components);
+          const modelLower = (model || '').toLowerCase();
+          if (modelLower.includes('iphone')) cameraKey = 'iphone';
+          else if (modelLower.includes('galaxy') || modelLower.includes('sm-')) cameraKey = 'galaxy';
+          else if (modelLower.includes('canon') || modelLower.includes('nikon') || modelLower.includes('sony') || modelLower.includes('pentax')) cameraKey = 'dslr';
+          else if (modelLower.includes('gopro') || modelLower.includes('dji') || modelLower.includes('action')) cameraKey = 'action';
+          else if (modelLower.includes('cctv') || modelLower.includes('hikvision')) cameraKey = 'cctv';
+        }
+      } else if (tag === 0x8769) { // ExifIFDPointer
+        exifIfdOffset = dv.getUint32(e + 8, isLittleEndian);
+      }
+    }
+
+    if (exifIfdOffset >= 0) {
+      const exifAbs = tiffStart + exifIfdOffset;
+      const exifCount = dv.getUint16(exifAbs, isLittleEndian);
+      for (let i = 0; i < exifCount; i++) {
+        const e = exifAbs + 2 + i * 12;
+        const tag = dv.getUint16(e, isLittleEndian);
+        const format = dv.getUint16(e + 2, isLittleEndian);
+        const components = dv.getUint32(e + 4, isLittleEndian);
+        if (tag === 0x8827) { // ISO SpeedRatings
+          const value = readEntryValue(e, format, components);
+          if (Number.isFinite(Number(value))) iso = Number(value);
+        } else if (tag === 0x829A) { // ExposureTime
+          const value = readEntryValue(e, format, components);
+          if (Number.isFinite(Number(value))) exposureMs = Math.max(1, Math.round(Number(value) * 1000));
+        }
+      }
+    }
+
+    return {
+      model,
+      cameraKey,
+      iso,
+      exposureMs,
+    };
+  } catch (e) {
+    console.warn('카메라 모델 파싱 오류:', e);
+    return null;
+  }
 }
 
 /**
@@ -330,9 +499,19 @@ function calculateRiskScore(detectedObjects, avgBrightness, gamma) {
   return { score, level };
 }
 
-async function callApiAnalyze(imageData) {
+async function callApiAnalyze(imageData, captureSettings = {}) {
   try {
-    const body = { image: imageData };
+    const body = {
+      image: imageData,
+      cameraModel: captureSettings.cameraModel || sessionStorage.getItem("light_cameraModel") || "smartphone",
+      iso: Number(captureSettings.iso ?? sessionStorage.getItem("light_cameraIso") ?? 100),
+      exposureMs: Number(captureSettings.exposureMs ?? sessionStorage.getItem("light_cameraExposure") ?? 12),
+      angleDeg: Number(captureSettings.angleDeg ?? sessionStorage.getItem("light_cameraAngle") ?? 0),
+      cameraLabel: captureSettings.cameraLabel || sessionStorage.getItem("light_cameraLabel") || "스마트폰 기본",
+      locationMode: captureSettings.locationMode || sessionStorage.getItem("light_locationMode") || "auto",
+      locationZone: captureSettings.locationZone || sessionStorage.getItem("light_locationZone") || "제3종",
+    };
+    
     // canvas 압축으로 EXIF가 사라지므로, 업로드 시 미리 추출한 GPS를 같이 전송
     const rawGps = sessionStorage.getItem("light_rawGps");
     if (rawGps) {
@@ -344,6 +523,7 @@ async function callApiAnalyze(imageData) {
         }
       } catch (e) { /* 파싱 실패 시 무시 */ }
     }
+    
     const response = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -400,12 +580,7 @@ function simulateApiAnalysis(imageData) {
 
 function mainPageInit() {
   const uploadInput = document.getElementById("uploadInput");
-  const uploadBtn = document.getElementById("uploadBtn");
   const sampleBtn = document.getElementById("sampleBtn");
-
-  if (uploadBtn && uploadInput) {
-    uploadBtn.addEventListener("click", () => uploadInput.click());
-  }
 
   if (uploadInput) {
     uploadInput.addEventListener("change", (event) => {
@@ -419,8 +594,12 @@ function mainPageInit() {
         reader.onload = () => {
           // 대용량 사진은 압축 후 저장 (maxPx=1920, quality=0.85)
           compressImageToDataUrl(reader.result, 1920, 0.85).then((compressed) => {
+            const capture = saveCaptureSettings();
             setSessionImage(file.name, compressed, `${Math.round(file.size / 1024)}KB`);
-            window.location.href = withVersion("/analysis");
+            sessionStorage.setItem("light_captureSummary", formatCaptureSummary(capture));
+            
+            // 미리보기 모달 표시
+            showImagePreview(compressed, capture, file.name);
           });
         };
         reader.onerror = () => {
@@ -429,29 +608,157 @@ function mainPageInit() {
         reader.readAsDataURL(file);
       }
 
-      // canvas 압축 전에 원본 ArrayBuffer에서 GPS EXIF 먼저 추출
+      // canvas 압축 전에 원본 ArrayBuffer에서 EXIF 정보(카메라 모델, GPS) 먼저 추출
       // (canvas.toDataURL() 은 EXIF를 제거하므로 반드시 원본 단계에서 추출해야 함)
-      const gpsReader = new FileReader();
-      gpsReader.onload = () => {
-        const gps = extractGpsFromArrayBuffer(gpsReader.result);
-        sessionStorage.setItem("light_rawGps", gps ? JSON.stringify(gps) : "");
+      const exifReader = new FileReader();
+      exifReader.onload = () => {
+        const cameraInfo = extractCameraModelFromArrayBuffer(exifReader.result) || {};
+        const gps = extractGpsFromArrayBuffer(exifReader.result);
+        const cameraModel = cameraInfo.cameraKey || "smartphone";
+        const iso = Number.isFinite(cameraInfo.iso) ? cameraInfo.iso : 100;
+        const exposureMs = Number.isFinite(cameraInfo.exposureMs) ? cameraInfo.exposureMs : 12;
+        const angleDeg = 0;
+        const locationMode = "auto";
+        const locationZone = "제3종";
+
+        sessionStorage.setItem("light_exifCameraModel", cameraInfo.model || "기본 스마트폰");
+        sessionStorage.setItem("light_exifCameraKey", cameraModel);
+        sessionStorage.setItem("light_cameraModel", cameraModel);
+        sessionStorage.setItem("light_cameraLabel", CAMERA_MODEL_LABELS[cameraModel] || CAMERA_MODEL_LABELS.default);
+        sessionStorage.setItem("light_cameraIso", String(iso));
+        sessionStorage.setItem("light_cameraExposure", String(exposureMs));
+        sessionStorage.setItem("light_cameraAngle", String(angleDeg));
+        sessionStorage.setItem("light_locationMode", locationMode);
+        sessionStorage.setItem("light_locationZone", locationZone);
+
+        const exifInfoEl = document.getElementById("exifDetectionInfo");
+        const cameraTextEl = document.getElementById("detectedCameraModelText");
+        const gpsTextEl = document.getElementById("detectedGpsText");
+        const captureTextEl = document.getElementById("detectedCaptureText");
+        const autoCameraModelEl = document.getElementById("autoCameraModel");
+        const autoCameraIsoEl = document.getElementById("autoCameraIso");
+        const autoCameraExposureEl = document.getElementById("autoCameraExposure");
+        const autoCameraAngleEl = document.getElementById("autoCameraAngle");
+        const autoLocationZoneEl = document.getElementById("autoLocationZone");
+        const zoneLabelMap = {
+          '제1종': '제1종 자연환경 보존지역',
+          '제2종': '제2종 농림지역',
+          '제3종': '제3종 주거지역',
+          '제4종': '제4종 상업·공업지역',
+        };
+
+        if (exifInfoEl) exifInfoEl.style.display = "block";
+        if (cameraTextEl) cameraTextEl.textContent = cameraInfo.model || "기본 스마트폰";
+        if (gpsTextEl) gpsTextEl.textContent = gps && typeof gps.lat === "number" && typeof gps.lon === "number"
+          ? `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)}`
+          : "감지되지 않음 - 기본 구역 적용";
+        if (captureTextEl) captureTextEl.textContent = `카메라 기종 ${CAMERA_MODEL_LABELS[cameraModel] || CAMERA_MODEL_LABELS.default}, ISO ${iso}, 노출 ${exposureMs}ms, 각도 ${angleDeg}°로 자동 설정됩니다.`;
+        if (autoCameraModelEl) autoCameraModelEl.textContent = CAMERA_MODEL_LABELS[cameraModel] || CAMERA_MODEL_LABELS.default;
+        if (autoCameraIsoEl) autoCameraIsoEl.textContent = String(iso);
+        if (autoCameraExposureEl) autoCameraExposureEl.textContent = `${exposureMs}ms`;
+        if (autoCameraAngleEl) autoCameraAngleEl.textContent = `${angleDeg}°`;
+        if (autoLocationZoneEl) autoLocationZoneEl.textContent = gps
+          ? `GPS 자동감지 (${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)})`
+          : "GPS 정보 없음 - 기본값 제3종 주거지역 적용";
+
+        // canvas 압축으로 EXIF가 사라지므로, 업로드 시 미리 추출한 GPS를 같이 전송
+        const rawGps = extractGpsFromArrayBuffer(exifReader.result);
+        sessionStorage.setItem("light_rawGps", rawGps ? JSON.stringify(rawGps) : "");
         doCompress();
       };
-      gpsReader.onerror = () => {
+      exifReader.onerror = () => {
         sessionStorage.setItem("light_rawGps", "");
         doCompress();
       };
-      gpsReader.readAsArrayBuffer(file);
+      exifReader.readAsArrayBuffer(file);
     });
   }
 
   if (sampleBtn) {
     sampleBtn.addEventListener("click", () => {
+      const capture = saveCaptureSettings();
       const sample = getRandomSampleImage();
       setSessionImage(sample.name, sample.url, "1.1MB");
+      sessionStorage.setItem("light_captureSummary", formatCaptureSummary(capture));
       window.location.href = withVersion("/analysis");
     });
   }
+}
+
+/**
+ * 이미지 미리보기 모달 표시
+ */
+function showImagePreview(compressedImageDataUrl, captureSettings, fileName) {
+  const modal = document.getElementById("imagePreviewModal");
+  const previewImg = document.getElementById("previewImageDisplay");
+  const previewExifResult = document.getElementById("previewExifResult");
+  const previewExifStatus = document.getElementById("previewExifStatus");
+  const closeBtn = document.getElementById("closePreviewBtn");
+  const analyzeBtn = document.getElementById("analyzeBtn");
+
+  if (!modal) return;
+
+  // 이미지 표시
+  if (previewImg) {
+    previewImg.src = compressedImageDataUrl;
+  }
+
+  // EXIF 감지 상태 표시
+  const cameraModel = sessionStorage.getItem("light_cameraModel") || "smartphone";
+  const cameraLabel = sessionStorage.getItem("light_cameraLabel") || "기본 스마트폰";
+  const iso = sessionStorage.getItem("light_cameraIso") || "-";
+  const exposure = sessionStorage.getItem("light_cameraExposure") || "-";
+  const angle = sessionStorage.getItem("light_cameraAngle") || "-";
+  const rawGps = sessionStorage.getItem("light_rawGps");
+  const hasGps = rawGps && rawGps !== "";
+
+  let exifText = `<strong>✅ EXIF 정보 감지됨</strong><br>`;
+  exifText += `📷 카메라 기종: ${cameraLabel}<br>`;
+  exifText += `⚙️ ISO: ${iso}<br>`;
+  exifText += `⏱️ 노출 시간: ${exposure}ms<br>`;
+  exifText += `📐 촬영 각도: ${angle}°`;
+
+  if (!hasGps) {
+    exifText += `<br>📍 위치: GPS 정보 없음 (기본값 적용)`;
+  } else {
+    try {
+      const gpsData = JSON.parse(rawGps);
+      exifText += `<br>📍 위치: GPS 감지 (${gpsData.lat.toFixed(4)}, ${gpsData.lon.toFixed(4)})`;
+    } catch (e) {
+      exifText += `<br>📍 위치: GPS 정보 없음 (기본값 적용)`;
+    }
+  }
+
+  if (previewExifResult) {
+    previewExifResult.innerHTML = exifText;
+  }
+
+  // 모달 표시
+  modal.classList.remove("hidden");
+
+  // 닫기 버튼
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      modal.classList.add("hidden");
+    };
+  }
+
+  // 분석 시작 버튼
+  if (analyzeBtn) {
+    analyzeBtn.onclick = () => {
+      modal.classList.add("hidden");
+      window.location.href = withVersion("/analysis");
+    };
+  }
+
+  // ESC 키로 닫기
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      modal.classList.add("hidden");
+      document.removeEventListener("keydown", handleEscape);
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
 }
 
 function analysisPageInit() {
@@ -466,6 +773,25 @@ function analysisPageInit() {
   const progressFill = document.getElementById("progressFill");
   const progressPercent = document.getElementById("progressPercent");
   const statusText = document.getElementById("statusText");
+  const capture = {
+    cameraModel: sessionStorage.getItem("light_cameraModel") || "smartphone",
+    cameraLabel: sessionStorage.getItem("light_cameraLabel") || "스마트폰 기본",
+    iso: Number(sessionStorage.getItem("light_cameraIso") || "100"),
+    exposureMs: Number(sessionStorage.getItem("light_cameraExposure") || "12"),
+    angleDeg: Number(sessionStorage.getItem("light_cameraAngle") || "0"),
+  };
+
+  const analysisCameraModelEl = document.getElementById("analysisCameraModel");
+  const analysisCameraIsoEl = document.getElementById("analysisCameraIso");
+  const analysisCameraExposureEl = document.getElementById("analysisCameraExposure");
+  const analysisCameraAngleEl = document.getElementById("analysisCameraAngle");
+  if (analysisCameraModelEl) analysisCameraModelEl.textContent = capture.cameraLabel;
+  if (analysisCameraIsoEl) analysisCameraIsoEl.textContent = `${capture.iso}`;
+  if (analysisCameraExposureEl) analysisCameraExposureEl.textContent = `${capture.exposureMs}ms`;
+  if (analysisCameraAngleEl) analysisCameraAngleEl.textContent = `${capture.angleDeg}°`;
+
+  const captureSummaryEl = document.getElementById("analysisCaptureSummary");
+  if (captureSummaryEl) captureSummaryEl.title = formatCaptureSummary(capture);
 
   if (imageEl) imageEl.src = data;
   if (fileNameEl) fileNameEl.textContent = file;
@@ -495,7 +821,7 @@ function analysisPageInit() {
     if (currentIndex >= steps.length - 1) {
       clearInterval(interval);
       if (statusText) statusText.textContent = "AI 분석이 완료되었습니다. 결과 페이지로 이동합니다.";
-      resolveImageDataForApi(data).then((apiInput) => callApiAnalyze(apiInput)).then((apiResult) => {
+      resolveImageDataForApi(data).then((apiInput) => callApiAnalyze(apiInput, capture)).then((apiResult) => {
         const objectNames = apiResult.detected.map((o) => {
           const unit = o.unit || (o.type === "가로등" ? "lux" : "cd/m²");
           const measured = o.measuredValue ?? (unit === "lux" ? o.illuminanceLux : o.luminanceCdM2) ?? o.brightness;
@@ -518,6 +844,9 @@ function analysisPageInit() {
         sessionStorage.setItem("light_zonesSummary", JSON.stringify(apiResult.zonesSummary || {}));
         sessionStorage.setItem("light_pollutionOverall", apiResult.overallPollutionCategory || "미탐지");
         sessionStorage.setItem("light_pollutionSummary", JSON.stringify(apiResult.pollutionCategorySummary || {}));
+        if (apiResult.captureContext) {
+          sessionStorage.setItem("light_captureSummary", `${apiResult.captureContext.cameraLabel} · ISO ${apiResult.captureContext.iso} · ${apiResult.captureContext.exposureMs}ms · ${apiResult.captureContext.angleDeg}°`);
+        }
       }).catch((err) => {
         console.error("분석 결과 저장 실패", err);
       }).finally(() => {
@@ -565,6 +894,7 @@ function resultPageInit() {
   const zonesSummary = JSON.parse(sessionStorage.getItem("light_zonesSummary") || "{}");
   const pollutionOverall = sessionStorage.getItem("light_pollutionOverall") || "미탐지";
   const pollutionSummary = JSON.parse(sessionStorage.getItem("light_pollutionSummary") || "{}");
+  const captureSummary = sessionStorage.getItem("light_captureSummary") || "-";
   const rawGps = (() => {
     const value = sessionStorage.getItem("light_rawGps");
     if (!value) return null;
@@ -599,6 +929,16 @@ function resultPageInit() {
       detected,
       rawGps,
       gpsText,
+      captureSummary,
+      captureContext: {
+        cameraModel: sessionStorage.getItem("light_cameraModel") || "smartphone",
+        cameraLabel: sessionStorage.getItem("light_cameraLabel") || "스마트폰 기본",
+        iso: Number(sessionStorage.getItem("light_cameraIso") || "100"),
+        exposureMs: Number(sessionStorage.getItem("light_cameraExposure") || "12"),
+        angleDeg: Number(sessionStorage.getItem("light_cameraAngle") || "0"),
+        locationMode: sessionStorage.getItem("light_locationMode") || "auto",
+        locationZone: sessionStorage.getItem("light_locationZone") || "제3종",
+      },
     };
   }
 
@@ -623,6 +963,7 @@ function resultPageInit() {
       `대표 분류: ${payload.pollutionOverall}`,
       `조명환경관리구역: ${payload.zone} (${payload.zoneLabel})`,
       `GPS: ${payload.gpsText}`,
+      `촬영 조건: ${payload.captureSummary || "-"}`,
       `총 과태료: ${payload.totalFineAmount}만원`,
       `위반 건수: ${payload.violationCount}건`,
       `모델 상태: ${payload.modelStatus}`,
@@ -686,6 +1027,8 @@ function resultPageInit() {
     resultDetected.textContent = detected.map((d) => `${d.name}(${d.pollutionCategory || "미분류"}/${d.violationStage || '준수'})`).join(", ") || "탐지된 객체 없음";
   }
   if (riskSummary) riskSummary.textContent = riskSum;
+  const resultCaptureEl = document.getElementById("resultCapture");
+  if (resultCaptureEl) resultCaptureEl.textContent = captureSummary;
 
   const summaryDetectedCount = document.getElementById("summaryDetectedCount");
   const summaryViolationCount = document.getElementById("summaryViolationCount");

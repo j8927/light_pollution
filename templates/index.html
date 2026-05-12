@@ -65,8 +65,44 @@
           </div>
           <div class="upload-actions">
             <input type="file" id="uploadInput" accept="image/jpeg,image/png" hidden />
-            <button class="btn btn-primary" id="uploadBtn">파일 선택</button>
-            <p class="upload-note">또는 파일을 여기로 드래그하세요.</p>
+            <div class="capture-settings">
+              <div class="capture-settings-title">자동 적용되는 촬영 조건</div>
+              
+              <!-- 자동 감지 정보 표시 -->
+              <div id="exifDetectionInfo" style="display:none; background:#e3f2fd; padding:12px; border-radius:6px; margin-bottom:12px; font-size:0.9rem; border-left:4px solid #2196f3;">
+                <div style="margin-bottom:6px;">
+                  <strong>📸 EXIF 정보에서 자동 감지됨:</strong>
+                </div>
+                <div id="detectedCameraModel" style="margin-bottom:4px;">카메라: <span id="detectedCameraModelText" style="color:#1976d2; font-weight:500;">-</span></div>
+                <div id="detectedGpsInfo" style="margin-bottom:4px;">위치: <span id="detectedGpsText" style="color:#1976d2; font-weight:500;">-</span></div>
+                <div id="detectedCaptureText" style="color:#666; margin-top:4px;">촬영 조건도 EXIF 기본 정보로 자동 설정됩니다.</div>
+              </div>
+              
+              <div class="capture-grid">
+                <div class="field-group">
+                  <span>카메라 기종</span>
+                  <div class="capture-auto-value" id="autoCameraModel">카메라 기종, ISO, 노출 시간, 촬영 각도, 위치 정보 자동 감지 후 적용</div>
+                </div>
+                <div class="field-group">
+                  <span>ISO</span>
+                  <div class="capture-auto-value" id="autoCameraIso">-</div>
+                </div>
+                <div class="field-group">
+                  <span>노출 시간(ms)</span>
+                  <div class="capture-auto-value" id="autoCameraExposure">-</div>
+                </div>
+                <div class="field-group">
+                  <span>촬영 각도(°)</span>
+                  <div class="capture-auto-value" id="autoCameraAngle">-</div>
+                </div>
+                <div class="field-group">
+                  <span>위치 정보</span>
+                  <div class="capture-auto-value" id="autoLocationZone">-</div>
+                </div>
+              </div>
+              
+              <p class="capture-note">이미지 업로드 후 EXIF 정보에서 자동으로 촬영 조건과 위치 정보를 감지하여 적용합니다.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -95,6 +131,32 @@
         </div>
       </section>
     </main>
+
+    <!-- 이미지 미리보기 모달 -->
+    <div id="imagePreviewModal" class="modal hidden">
+      <div class="preview-modal-content">
+        <div class="preview-modal-header">
+          <h3>업로드된 이미지 확인</h3>
+          <button id="closePreviewBtn" class="btn btn-secondary" style="width:auto; height:36px;">닫기</button>
+        </div>
+        <div class="preview-modal-body">
+          <div class="preview-image-container">
+            <img id="previewImageDisplay" src="" alt="업로드된 이미지" />
+          </div>
+          <div class="preview-info-section">
+            <div class="preview-exif-status" id="previewExifStatus">
+              <div class="status-title">EXIF 정보 감지</div>
+              <div class="status-content">
+                <div id="previewExifResult">-</div>
+              </div>
+            </div>
+            <div class="preview-controls">
+              <button id="analyzeBtn" class="btn btn-primary" style="width:100%;">분석 시작</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div id="policyModal" class="modal hidden">
       <div class="modal-content">
