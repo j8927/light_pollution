@@ -237,6 +237,67 @@ def compute_fine(luminance_cd_m2_avg, luminance_cd_m2_max, illuminance_lux_max, 
         stage = '3단계'
 ```
 
+### 5-4-1. 4대 분류 알고리즘 상세
+
+탐지된 광원 객체는 `가로등`, `간판`, `조명` 세 가지 유형으로 분류된 후, 각 유형별로 다음의 4대 분류(침입광/눈부심/산란광/군집된빛)를 판단합니다.
+
+- **가로등**: 지점형 고휘도 광원의 특성을 반영하여 `눈부심`을 우선 강화하고, 상부 확산/저채도 특성은 `산란광`으로, 프레임 경계 인접성과 평균 밝기 상승은 `침입광`으로 해석합니다.
+- **간판**: 다수·고채도·고밀도 발광이 `군집된빛` 특성으로 연결되며, 가장자리 위치와 높은 평균 밝기는 `침입광`으로, 고휘도 포인트는 `눈부심`으로 추가 평가됩니다.
+- **장식조명(조명)**: 색채·밀도 기반 `군집된빛`을 기본으로 하고, 대면적 저채도 확산은 `산란광`, 경계 인접과 밝기 상승은 `침입광`, 고휘도 포인트는 `눈부심`으로 함께 평가합니다.
+
+#### 조명 유형별 분류 기준 요약
+
+| 유형 | 주요 특징 | 가중치 기준 |
+|---|---|---|
+| 가로등 | 지점형 고휘도 | `brightness_p95 >= 230`, `gamma >= 2.45`, `bright_pixel_ratio <= 14.0` → 눈부심 강화 |
+| 간판 | 고채도·밀도 | `saturation >= 0.30`, `bright_pixel_ratio >= 2.0` → 군집된빛 강화 |
+| 장식조명 | 색채/확산 혼합 | `area_ratio >= 0.22`, `bright_pixel_ratio >= 4.2`, `saturation <= 0.40` → 산란광/군집된빛 평가 |
+
+#### 4대 분류 판단 요소
+
+- `침입광`: `brightness_avg >= 52.0`, 프레임 가장자리 인접(`edge_margin < 0.14`) 등
+- `눈부심`: `brightness_p95 >= 230.0`, `gamma >= 2.45`, `bright_pixel_ratio` 기준
+- `산란광`: 면적 비율(`area_ratio >= 0.22`), 밝은 픽셀 비율(`bright_pixel_ratio >= 4.2`), 채도 낮음(`saturation <= 0.40`)
+- `군집된빛`: 채도 높음(`saturation >= 0.30`), 밝은 픽셀 밀집(`bright_pixel_ratio >= 2.0`)
+
+최종적으로 각 객체에 대해 점수화된 4개 분류 값 중 최고 점수를 선택합니다. 전체 사진의 대표 분류는 탐지 객체별 결과를 집계하여 `눈부심 > 침입광 > 군집된빛 > 산란광` 순으로 동률 해소합니다.
+
+### 5-4-2. EXIF 기반 카메라 보정 알고리즘
+
+이미지 EXIF에서 추출한 카메라 모델을 `smartphone`, `iphone`, `galaxy`, `dslr`, `action`, `cctv` 등으로 분류하고, ISO/노출/촬영 각도에 따라 밝기 보정 계수를 계산합니다.
+
+- **EXIF 추출**: `Model` 태그에서 원본 모델명 획득 후 기종 키로 매핑
+  - `iphone` → `iphone`
+  - `galaxy`, `sm-` → `galaxy`
+  - `canon`, `nikon`, `sony`, `pentax` → `dslr`
+  - `gopro`, `dji`, `action` → `action`
+  - `cctv`, `hikvision` → `cctv`
+  - 그 외 → `smartphone`
+- **추출 정보**: ISO(`0x8827`), ExposureTime(`0x829A`)도 함께 사용
+
+각 카메라 프로필은 다음 보정 파라미터를 가집니다.
+
+| 카메라 키 | label | iso_ref | exposure_ref_ms | brightness_bias | glare_bias | angle_power |
+|---|---|---|---|---|---|---|
+| smartphone | 스마트폰 기본 | 100 | 12 | 1.00 | 1.02 | 0.82 |
+| iphone | 아이폰 계열 | 80 | 10 | 0.98 | 1.00 | 0.80 |
+| galaxy | 갤럭시 계열 | 90 | 11 | 1.00 | 1.03 | 0.83 |
+| dslr | 디지털카메라/DSLR | 200 | 20 | 0.95 | 0.97 | 0.76 |
+| action | 액션캠/드론 | 160 | 16 | 1.06 | 1.08 | 0.90 |
+| cctv | CCTV/고정형 | 140 | 18 | 1.08 | 1.10 | 0.88 |
+| default | 기본값 | 100 | 12 | 1.00 | 1.00 | 0.82 |
+
+#### 보정 공식
+
+- `iso_scale = iso_ref / iso`
+- `exposure_scale = sqrt(exposure_ref_ms / exposure_ms)`
+- `angle_scale = 1 / max(0.55, cos(angle_deg) ** angle_power)`
+- `brightness_scale = brightness_bias * iso_scale * exposure_scale * angle_scale` (0.55~2.40 제한)
+- `glare_scale = glare_bias * (0.92 + 0.08 * angle_scale)` (0.85~1.25 제한)
+- `pixel_ratio_scale = 1 / max(0.82, brightness_scale ** 0.35)` (0.74~1.12 제한)
+
+이 보정 계수는 객체별 밝기/눈부심 지표를 정규화하는 `apply_capture_adjustment()`에 적용되어, `brightness`, `brightness_p95`, `brightness_max`, `bright_pixel_ratio` 값을 실제 촬영 환경에 맞게 보정합니다.
+
 ### 5-5. 적응형 탐지 필터 (`should_keep_detection`)
 
 어두운 야간 환경에서의 탐지 누락을 줄이기 위한 적응형 필터.
@@ -346,6 +407,58 @@ gunicorn  →  backend.py 의 app 객체
 - `render.yaml`: 빌드/시작 명령, 환경변수 설정
 - `runtime.txt`: Python 버전 고정
 - `requirements.txt`: 의존성 전체 명시
+
+### 5-9. PDF 리포트 다운로드
+
+분석 결과를 PDF로 다운로드하는 기능은 프론트엔드 버튼 클릭으로 `/api/report/pdf`에 JSON payload를 POST하고, 백엔드가 PDF 바이트를 응답하는 구조로 구현되어 있습니다.
+
+```python
+@app.route('/api/report/pdf', methods=['POST'])
+def api_report_pdf():
+    report_data = request.get_json(silent=True) or {}
+    if not report_data:
+        return jsonify({'status': 'error', 'message': 'No report data provided.'}), 400
+
+    pdf_buffer = _build_pdf_report_bytes(report_data)
+    filename = _build_pdf_report_filename(report_data)
+    return send_file(
+        pdf_buffer,
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename,
+    )
+```
+
+- `_build_pdf_report_bytes(report_data)`는 `reportlab`을 사용해 PDF 문서를 생성합니다.
+- `_build_pdf_report_filename(report_data)`는 원본 파일명을 기반으로 안전한 PDF 파일명을 만듭니다.
+- 반환된 PDF는 `application/pdf` MIME 타입으로 다운로드됩니다.
+
+프론트엔드 `static/js/main.js`에서는 다음과 같은 흐름으로 PDF 요청을 처리합니다.
+
+```javascript
+async function downloadReport() {
+  const payload = buildReportPayload();
+  const response = await fetch('/api/report/pdf', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`PDF generation failed: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = buildPdfFileName(payload.fileName);
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+```
+
+- `buildReportPayload()`는 분석 결과 및 EXIF/촬영 정보를 JSON으로 구성합니다.
+- 응답이 성공적이지 않으면 예외가 발생하고, 현재 구현에서는 TXT 파일로 대체 다운로드하는 폴백 경로가 동작합니다.
 
 ---
 
