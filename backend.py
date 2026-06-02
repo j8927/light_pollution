@@ -45,55 +45,48 @@ COCO_TO_KR = {
 
 DIRECT_LIGHT_CLASSES = {'간판', '가로등', '조명', '구조물', '사람', '차량'}
 
-# 촬영 조건별 보정 프로필
+# 촬영 조건별 보정 프로필 (2026 대표 기기 기준으로 갱신)
+# NOTE: 값은 공개 사양(제조사 스펙)·리뷰·센서 동작 특성의 실무적 추정에 기반한 경험적 보정값입니다.
 CAMERA_PROFILES = {
-    'smartphone': {
-        'label': '스마트폰 기본',
-        'iso_ref': 100.0,
-        'exposure_ref_ms': 12.0,
-        'brightness_bias': 1.00,
-        'glare_bias': 1.02,
-        'angle_power': 0.82,
-    },
     'iphone': {
-        'label': '아이폰 계열',
-        'iso_ref': 80.0,
-        'exposure_ref_ms': 10.0,
-        'brightness_bias': 0.98,
+        'label': '아이폰 계열 (2026 대표)',
+        'iso_ref': 64.0,
+        'exposure_ref_ms': 8.0,
+        'brightness_bias': 0.92,
+        'glare_bias': 0.98,
+        'angle_power': 0.78,
+    },
+    'galaxy': {
+        'label': '갤럭시 계열 (2026 대표)',
+        'iso_ref': 64.0,
+        'exposure_ref_ms': 9.0,
+        'brightness_bias': 0.95,
         'glare_bias': 1.00,
         'angle_power': 0.80,
     },
-    'galaxy': {
-        'label': '갤럭시 계열',
-        'iso_ref': 90.0,
-        'exposure_ref_ms': 11.0,
-        'brightness_bias': 1.00,
-        'glare_bias': 1.03,
-        'angle_power': 0.83,
-    },
     'dslr': {
-        'label': '디지털카메라/DSLR',
-        'iso_ref': 200.0,
-        'exposure_ref_ms': 20.0,
-        'brightness_bias': 0.95,
-        'glare_bias': 0.97,
-        'angle_power': 0.76,
+        'label': '디지털카메라/DSLR (대표)',
+        'iso_ref': 100.0,
+        'exposure_ref_ms': 25.0,
+        'brightness_bias': 0.94,
+        'glare_bias': 0.96,
+        'angle_power': 0.75,
     },
     'action': {
-        'label': '액션캠/드론',
-        'iso_ref': 160.0,
-        'exposure_ref_ms': 16.0,
-        'brightness_bias': 1.06,
-        'glare_bias': 1.08,
-        'angle_power': 0.90,
-    },
-    'cctv': {
-        'label': 'CCTV/고정형',
-        'iso_ref': 140.0,
-        'exposure_ref_ms': 18.0,
+        'label': '액션캠/드론 (대표)',
+        'iso_ref': 200.0,
+        'exposure_ref_ms': 12.0,
         'brightness_bias': 1.08,
         'glare_bias': 1.10,
         'angle_power': 0.88,
+    },
+    'cctv': {
+        'label': 'CCTV/고정형 (대표)',
+        'iso_ref': 400.0,
+        'exposure_ref_ms': 33.3,
+        'brightness_bias': 1.12,
+        'glare_bias': 1.15,
+        'angle_power': 0.86,
     },
     'default': {
         'label': '기본값',
