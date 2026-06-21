@@ -1,9 +1,0 @@
-names:
-- 간판
-- 조명
-- 가로등
-nc: 3
-path: data/images
-train: train/images
-val: val/images
-test: test/images

@@ -21,7 +21,9 @@ def ensure_data_config(data_dir, out_path="data/light_pollution.yaml"):
         'val': 'val/images' if os.path.isdir(val_dir) else 'valid/images',
         'nc': 3,
         'names': ['간판', '조명', '가로등']
-    }   os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    }   
+    
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, 'w', encoding='utf-8') as f:
         yaml.dump(data_cfg, f, allow_unicode=True)
     return out_path
@@ -34,7 +36,7 @@ def main():
         default='data/images',
         help='데이터 경로(폴더 또는 data.yaml). 기본: data/images'
     )
-    parser.add_argument('--epochs', type=int, default=50, help='학습 epoch 수')
+    parser.add_argument('--epochs', type=int, default=100, help='학습 epoch 수')
     parser.add_argument('--batch', type=int, default=8, help='배치 크기')
     parser.add_argument('--imgsz', type=int, default=640, help='이미지 사이즈')
     parser.add_argument('--model', default='yolov8n.pt', help='기본 YOLO 모델 체크포인트')
