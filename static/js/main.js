@@ -361,6 +361,19 @@ function readSessionImage() {
   };
 }
 
+function resetExifSessionState() {
+  [
+    "light_rawGps",
+    "light_exifCameraModel",
+    "light_exifCameraKey",
+    "light_gpsDetected",
+    "light_allZonesMode",
+    "light_zonesSummary",
+    "light_zone",
+    "light_zoneLabel",
+  ].forEach((key) => sessionStorage.removeItem(key));
+}
+
 function rgbToHsv(r, g, b) {
   r /= 255; g /= 255; b /= 255;
   const max = Math.max(r, g, b);
@@ -559,6 +572,145 @@ async function resolveImageDataForApi(imageRef) {
   }
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function getStoredGps() {
+  const value = sessionStorage.getItem("light_rawGps");
+  if (!value) return null;
+  try {
+    const gps = JSON.parse(value);
+    if (gps && Number.isFinite(Number(gps.lat)) && Number.isFinite(Number(gps.lon))) {
+      return { lat: Number(gps.lat), lon: Number(gps.lon) };
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+function formatDistanceMeters(value) {
+  const distance = Number(value);
+  if (!Number.isFinite(distance)) return "-";
+  return distance < 10 ? `${distance.toFixed(2)}m` : `${distance.toFixed(1)}m`;
+}
+
+function renderCommercialGroup(title, stores) {
+  const items = stores.map((store) => `
+    <details class="commercial-store">
+      <summary>
+        <span>${escapeHtml(store.name || "상점명 없음")}</span>
+        <small>${formatDistanceMeters(store.distanceMeters)}</small>
+      </summary>
+      <dl>
+        <div><dt>상점명</dt><dd>${escapeHtml(store.name || "-")}</dd></div>
+        <div><dt>영업상태</dt><dd>${escapeHtml(store.status || "-")}</dd></div>
+        <div><dt>대분류</dt><dd>${escapeHtml(store.major || "-")}</dd></div>
+        <div><dt>중분류</dt><dd>${escapeHtml(store.minor || "-")}</dd></div>
+        <div><dt>업종명</dt><dd>${escapeHtml(store.businessType || "-")}</dd></div>
+        <div><dt>도로명주소</dt><dd>${escapeHtml(store.address || "-")}</dd></div>
+        <div><dt>개업일</dt><dd>${escapeHtml(store.openDate || "-")}</dd></div>
+        <div><dt>폐업일</dt><dd>${escapeHtml(store.closeDate || "-")}</dd></div>
+        <div><dt>거리</dt><dd>${formatDistanceMeters(store.distanceMeters)}</dd></div>
+      </dl>
+    </details>
+  `).join("");
+
+  return `
+    <div class="commercial-group">
+      <h4>${title}</h4>
+      ${items || '<p class="commercial-empty">해당 반경 안에 포함되는 가게가 없습니다.</p>'}
+    </div>
+  `;
+}
+
+function setupBusanCommercialLookup(rawGps) {
+  const lookupBtn = document.getElementById("commercialLookupBtn");
+  const messageEl = document.getElementById("commercialGpsMessage");
+  const resultsEl = document.getElementById("commercialResults");
+  if (!lookupBtn || !messageEl || !resultsEl) return;
+
+  const gps = rawGps && Number.isFinite(Number(rawGps.lat)) && Number.isFinite(Number(rawGps.lon))
+    ? { lat: Number(rawGps.lat), lon: Number(rawGps.lon) }
+    : null;
+
+  if (!gps) {
+    lookupBtn.style.display = "none";
+    lookupBtn.disabled = true;
+    messageEl.textContent = "이미지에 GPS 정보가 없어 주변 상점 조회를 사용할 수 없습니다.";
+    resultsEl.innerHTML = "";
+    return;
+  }
+
+  lookupBtn.style.display = "inline-flex";
+  lookupBtn.disabled = false;
+  messageEl.textContent = `GPS 좌표 ${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)} 기준으로 조회할 수 있습니다.`;
+
+  lookupBtn.addEventListener("click", async () => {
+    lookupBtn.disabled = true;
+    lookupBtn.textContent = "조회 중...";
+    resultsEl.innerHTML = '<p class="commercial-loading">주변 상점 정보를 불러오는 중입니다.</p>';
+
+    try {
+      const params = new URLSearchParams({
+        lat: String(gps.lat),
+        lon: String(gps.lon),
+        address: "부산진구",
+      });
+      const response = await fetch(`/api/busan-commercial/nearby?${params.toString()}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.status !== "success") {
+        if (response.status === 409 && data.code === "CACHE_REQUIRED") {
+          resultsEl.innerHTML = '<p class="commercial-empty">상점 데이터 캐시가 없습니다. 터미널에서 busan_update.py를 먼저 실행해주세요.</p>';
+          return;
+        }
+        throw new Error(data.message || `상점 조회 실패 (${response.status})`);
+      }
+
+      const debug = data.debug || {};
+      console.log("API Response:", debug.apiResponse ?? data);
+      console.log("Cache Meta:", debug.cacheMeta);
+      console.log("Items Count:", debug.itemsCount);
+      console.log("Nearest stores TOP 10:", debug.nearestStores);
+      console.log("Within 30m:", debug.within30mCount);
+
+      const groups = data.groups || {};
+      const within5m = groups.within5m || [];
+      const within10m = groups.within10m || [];
+      const within30m = groups.within30m || [];
+      const nearestStores = data.nearestStores || [];
+      const nearbyTotal = within5m.length + within10m.length + within30m.length;
+      const nearbyEmptyMessage = nearbyTotal
+        ? ""
+        : '<p class="commercial-empty">30m 이내 주변 상점 정보가 없습니다.</p>';
+
+      if (!nearbyTotal && !nearestStores.length) {
+        resultsEl.innerHTML = '<p class="commercial-empty">30m 이내 주변 상점 정보가 없습니다.</p>';
+        return;
+      }
+
+      resultsEl.innerHTML = [
+        nearbyEmptyMessage,
+        renderCommercialGroup("5m 이내", within5m),
+        renderCommercialGroup("5m 초과 ~ 10m 이내", within10m),
+        renderCommercialGroup("10m 초과 ~ 30m 이내", within30m),
+        renderCommercialGroup("가장 가까운 상점 TOP 10", nearestStores),
+      ].join("");
+    } catch (err) {
+      resultsEl.innerHTML = `<p class="commercial-error">${escapeHtml(err.message || "주변 상점 조회 중 오류가 발생했습니다.")}</p>`;
+    } finally {
+      lookupBtn.disabled = false;
+      lookupBtn.textContent = "주변 상점 조회";
+    }
+  });
+}
+
 function simulateApiAnalysis(imageData) {
   return analyzeLightImage(imageData).then((analysis) => {
     // API 호출 실패 시 로컬 fallback — 과태료 산출 불가(서버 필요)하므로 미탐지로 반환
@@ -586,6 +738,7 @@ function mainPageInit() {
     uploadInput.addEventListener("change", (event) => {
       const file = event.target.files?.[0];
       if (!file) return;
+      resetExifSessionState();
       // 동일 파일 재선택 가능하도록 input 초기화
       uploadInput.value = "";
 
@@ -663,11 +816,15 @@ function mainPageInit() {
 
         // canvas 압축으로 EXIF가 사라지므로, 업로드 시 미리 추출한 GPS를 같이 전송
         const rawGps = extractGpsFromArrayBuffer(exifReader.result);
-        sessionStorage.setItem("light_rawGps", rawGps ? JSON.stringify(rawGps) : "");
+        if (rawGps) {
+          sessionStorage.setItem("light_rawGps", JSON.stringify(rawGps));
+        } else {
+          sessionStorage.removeItem("light_rawGps");
+        }
         doCompress();
       };
       exifReader.onerror = () => {
-        sessionStorage.setItem("light_rawGps", "");
+        sessionStorage.removeItem("light_rawGps");
         doCompress();
       };
       exifReader.readAsArrayBuffer(file);
@@ -676,6 +833,7 @@ function mainPageInit() {
 
   if (sampleBtn) {
     sampleBtn.addEventListener("click", () => {
+      resetExifSessionState();
       const capture = saveCaptureSettings();
       const sample = getRandomSampleImage();
       setSessionImage(sample.name, sample.url, "1.1MB");
@@ -709,8 +867,8 @@ function showImagePreview(compressedImageDataUrl, captureSettings, fileName) {
   const iso = sessionStorage.getItem("light_cameraIso") || "-";
   const exposure = sessionStorage.getItem("light_cameraExposure") || "-";
   const angle = sessionStorage.getItem("light_cameraAngle") || "-";
-  const rawGps = sessionStorage.getItem("light_rawGps");
-  const hasGps = rawGps && rawGps !== "";
+  const gpsData = getStoredGps();
+  const hasGps = !!gpsData;
 
   let exifText = `<strong>✅ EXIF 정보 감지됨</strong><br>`;
   exifText += `📷 카메라 기종: ${cameraLabel}<br>`;
@@ -721,12 +879,7 @@ function showImagePreview(compressedImageDataUrl, captureSettings, fileName) {
   if (!hasGps) {
     exifText += `<br>📍 위치: GPS 정보 없음 (기본값 적용)`;
   } else {
-    try {
-      const gpsData = JSON.parse(rawGps);
-      exifText += `<br>📍 위치: GPS 감지 (${gpsData.lat.toFixed(4)}, ${gpsData.lon.toFixed(4)})`;
-    } catch (e) {
-      exifText += `<br>📍 위치: GPS 정보 없음 (기본값 적용)`;
-    }
+    exifText += `<br>📍 위치: GPS 감지 (${gpsData.lat.toFixed(4)}, ${gpsData.lon.toFixed(4)})`;
   }
 
   if (previewExifResult) {
@@ -895,15 +1048,7 @@ function resultPageInit() {
   const pollutionOverall = sessionStorage.getItem("light_pollutionOverall") || "미탐지";
   const pollutionSummary = JSON.parse(sessionStorage.getItem("light_pollutionSummary") || "{}");
   const captureSummary = sessionStorage.getItem("light_captureSummary") || "-";
-  const rawGps = (() => {
-    const value = sessionStorage.getItem("light_rawGps");
-    if (!value) return null;
-    try {
-      return JSON.parse(value);
-    } catch (e) {
-      return null;
-    }
-  })();
+  const rawGps = getStoredGps();
   const gpsText = rawGps && typeof rawGps.lat === "number" && typeof rawGps.lon === "number"
     ? `${rawGps.lat.toFixed(6)}, ${rawGps.lon.toFixed(6)}`
     : (gpsDetected ? `${zone} (${zoneLabel})` : "미확인");
@@ -1059,6 +1204,7 @@ function resultPageInit() {
   const summaryZoneEl = document.getElementById("summaryZone");
   if (resultZoneEl) resultZoneEl.textContent = zoneText;
   if (summaryZoneEl) summaryZoneEl.textContent = zoneText;
+  setupBusanCommercialLookup(rawGps);
 
   // GPS 없는 경우 4개 구역 전체 시뮬레이션 테이블
   const allZonesSection = document.getElementById("allZonesSection");

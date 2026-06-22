@@ -144,6 +144,21 @@ a{color:inherit; text-decoration:none;}
 .detail-grid{display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-top:10px;}
 .detail-box{background:#f8fbff; border:1px solid #e7edf7; border-radius:10px; padding:10px; text-align:center;}
 .detail-box strong{display:block; margin-bottom:4px; color:#43507b;}
+.commercial-card{margin-top:14px;}
+.commercial-toolbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;}
+.commercial-toolbar p{margin:0; color:#40506d; font-size:.92rem;}
+.commercial-results{display:grid; gap:12px; margin-top:14px;}
+.commercial-group{border:1px solid #e3eaf5; border-radius:12px; background:#f9fbff; padding:12px;}
+.commercial-group h4{margin:0 0 10px; color:#1f3a5f; font-size:.98rem;}
+.commercial-store{background:#fff; border:1px solid #e5ebf5; border-radius:10px; margin-top:8px; overflow:hidden;}
+.commercial-store summary{display:flex; justify-content:space-between; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; font-weight:700; color:#1f2a3d;}
+.commercial-store summary small{font-weight:700; color:#1f9d5d; white-space:nowrap;}
+.commercial-store dl{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px 12px; margin:0; padding:0 12px 12px; border-top:1px solid #eef2f8;}
+.commercial-store dl div{min-width:0; padding-top:8px;}
+.commercial-store dt{font-size:.78rem; color:#66748a; font-weight:700;}
+.commercial-store dd{margin:2px 0 0; color:#1f2a3d; font-size:.88rem; overflow-wrap:anywhere;}
+.commercial-empty,.commercial-loading,.commercial-error{margin:0; color:#66748a; font-size:.9rem;}
+.commercial-error{color:#d63939;}
 .warning-card{background:#fff8dc; border:1px solid #f2e3b0; color:#2f2f2f; margin-top:14px;}
 .warning-card ul{margin:10px 0 0; padding-left:18px;}
 .warning-card li{margin-bottom:6px;}
@@ -176,6 +191,7 @@ a{color:inherit; text-decoration:none;}
   .preview-modal-body{flex-direction:column;}
   .preview-image-container{min-width:100%; height:250px;}
   .detail-grid{grid-template-columns:repeat(3,1fr);}
+  .commercial-store dl{grid-template-columns:1fr;}
   .feature-grid{grid-template-columns:repeat(2,1fr);}
   .upload-box{flex-direction:column; align-items:center;}
   .upload-actions{width:100%;}

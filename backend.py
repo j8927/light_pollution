@@ -2,8 +2,12 @@ from flask import Flask, request, jsonify, render_template, send_file
 from flask_cors import CORS
 import os
 import base64
+import hashlib
 import io
+import json
 import math
+import re
+import time
 from datetime import datetime
 import cv2
 import numpy as np
@@ -12,6 +16,33 @@ import requests as req_lib  # Nominatim 역지오코딩용
 
 app = Flask(__name__)
 CORS(app)
+
+BUSAN_COMMERCIAL_ENDPOINT = (
+    'https://apis.data.go.kr/6260000/BusanCommercialHistoryService/'
+    'getCommercialHistoryList'
+)
+BUSAN_COMMERCIAL_MAX_PAGES = 0  # 0 means scan every page from totalCount.
+BUSAN_COMMERCIAL_NUM_OF_ROWS = 1000
+BUSAN_COMMERCIAL_CACHE_PATH = os.path.join('data', 'busan_commercial_cache.json')
+BUSAN_COMMERCIAL_CACHE = None
+
+
+def load_local_env(path='.env'):
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, encoding='utf-8') as env_file:
+            for raw_line in env_file:
+                line = raw_line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    except OSError:
+        return
+
+
+load_local_env()
 
 MODEL = None
 MODEL_STATUS = "모델 로드 중..."
@@ -1081,6 +1112,740 @@ def api_report_pdf():
         as_attachment=True,
         download_name=filename,
     )
+
+
+def get_distance_meters(lat1, lon1, lat2, lon2):
+    earth_radius_m = 6371000
+    d_lat = math.radians(lat2 - lat1)
+    d_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(d_lon / 2) ** 2
+    )
+    return earth_radius_m * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def parse_point_geom(geom):
+    if not geom:
+        return None
+    match = re.search(r'POINT\(([-\d.]+)\s+([-\d.]+)\)', str(geom))
+    if not match:
+        return None
+    try:
+        return {'lon': float(match.group(1)), 'lat': float(match.group(2))}
+    except ValueError:
+        return None
+
+
+def normalize_items(item):
+    if not item:
+        return []
+    return item if isinstance(item, list) else [item]
+
+
+def _parse_positive_int(value, default=0):
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_nested(data, *keys):
+    current = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _normalize_commercial_store(item, origin_lat, origin_lon):
+    point = parse_point_geom(item.get('geom'))
+    if not point:
+        return None
+
+    distance = get_distance_meters(origin_lat, origin_lon, point['lat'], point['lon'])
+
+    return {
+        'name': item.get('bplcnm') or '상점명 없음',
+        'status': item.get('trdstatenm') or '-',
+        'major': item.get('majornm') or '-',
+        'minor': item.get('minornm') or '-',
+        'businessType': item.get('upjongnm') or '-',
+        'address': item.get('rdnwhladdr') or '-',
+        'openDate': item.get('apvperymd') or item.get('apvpermymd') or '-',
+        'closeDate': item.get('dcbyymd') or item.get('dcbymd') or '-',
+        'lat': point['lat'],
+        'lon': point['lon'],
+        'distanceMeters': round(distance, 2),
+    }
+
+
+def _group_commercial_stores(stores):
+    groups = {'within5m': [], 'within10m': [], 'within30m': []}
+    for store in sorted(stores, key=lambda x: x['distanceMeters']):
+        distance = store['distanceMeters']
+        if distance <= 5:
+            groups['within5m'].append(store)
+        elif distance <= 10:
+            groups['within10m'].append(store)
+        elif distance <= 30:
+            groups['within30m'].append(store)
+    return groups
+
+
+def _append_unique(values, value):
+    cleaned = str(value or '').strip()
+    if cleaned and cleaned not in values:
+        values.append(cleaned)
+
+
+def _build_busan_commercial_search_terms(lat, lon, fallback_address):
+    terms = []
+    address_info = {}
+    try:
+        resp = req_lib.get(
+            'https://nominatim.openstreetmap.org/reverse',
+            params={
+                'lat': lat,
+                'lon': lon,
+                'format': 'json',
+                'addressdetails': 1,
+                'accept-language': 'ko',
+            },
+            headers={'User-Agent': 'LightPollutionDetector/1.0 (research)'},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        address_info = data.get('address') or {}
+    except Exception as exc:
+        print('Reverse geocode for commercial search failed:', exc, flush=True)
+
+    district = (
+        address_info.get('city_district')
+        or address_info.get('county')
+        or address_info.get('borough')
+        or address_info.get('municipality')
+    )
+    dong = (
+        address_info.get('suburb')
+        or address_info.get('quarter')
+        or address_info.get('neighbourhood')
+        or address_info.get('village')
+        or address_info.get('town')
+    )
+    road = address_info.get('road')
+
+    if district and dong:
+        _append_unique(terms, f'{district} {dong}')
+    _append_unique(terms, dong)
+    if district and road:
+        _append_unique(terms, f'{district} {road}')
+    _append_unique(terms, road)
+    _append_unique(terms, district)
+    _append_unique(terms, fallback_address)
+
+    return terms, address_info
+
+
+def _commercial_item_key(item):
+    return '|'.join([
+        str(item.get('bplcnm') or '').strip(),
+        str(item.get('rdnwhladdr') or '').strip(),
+        str(item.get('geom') or '').strip(),
+        str(item.get('apvperymd') or item.get('apvpermymd') or '').strip(),
+    ])
+
+
+def _fetch_commercial_page(service_key, search_term, page_no):
+    params = {
+        'serviceKey': service_key,
+        'pageNo': page_no,
+        'numOfRows': BUSAN_COMMERCIAL_NUM_OF_ROWS,
+        'resultType': 'json',
+    }
+    if search_term:
+        params['rdnwhladdr'] = search_term
+
+    upstream = req_lib.get(
+        BUSAN_COMMERCIAL_ENDPOINT,
+        params=params,
+        timeout=8,
+    )
+    upstream.raise_for_status()
+    payload = upstream.json()
+
+    header = _get_nested(payload, 'response', 'header') or {}
+    if header.get('resultCode') not in (None, '00'):
+        raise RuntimeError(header.get('resultMsg') or 'Busan commercial API returned an error.')
+
+    body = _get_nested(payload, 'response', 'body') or {}
+    items = [
+        item
+        for item in normalize_items(_get_nested(body, 'items', 'item'))
+        if isinstance(item, dict)
+    ]
+    return {
+        'payload': payload,
+        'totalCount': body.get('totalCount'),
+        'items': items,
+    }
+
+
+def _fetch_commercial_items_for_term(service_key, search_term):
+    collected_items = []
+    total_count = None
+    total_pages = None
+    requested_pages = 0
+    first_payload = None
+
+    page_no = 1
+    while True:
+        requested_pages += 1
+        page = _fetch_commercial_page(service_key, search_term, page_no)
+        payload = page['payload']
+        if first_payload is None:
+            first_payload = payload
+
+        if total_count is None:
+            total_count = page['totalCount']
+            parsed_total_count = _parse_positive_int(total_count)
+            if parsed_total_count:
+                total_pages = math.ceil(parsed_total_count / BUSAN_COMMERCIAL_NUM_OF_ROWS)
+                if BUSAN_COMMERCIAL_MAX_PAGES > 0:
+                    total_pages = min(total_pages, BUSAN_COMMERCIAL_MAX_PAGES)
+
+        page_items = page['items']
+        collected_items.extend(page_items)
+
+        if len(page_items) < BUSAN_COMMERCIAL_NUM_OF_ROWS:
+            break
+        if total_pages is not None and page_no >= total_pages:
+            break
+        if total_pages is None and BUSAN_COMMERCIAL_MAX_PAGES > 0 and page_no >= BUSAN_COMMERCIAL_MAX_PAGES:
+            break
+        page_no += 1
+
+    return {
+        'term': search_term,
+        'items': collected_items,
+        'totalCount': total_count,
+        'totalPages': total_pages,
+        'requestedPages': requested_pages,
+        'firstPayload': first_payload,
+    }
+
+
+def _normalize_commercial_cache_item(item):
+    point = parse_point_geom(item.get('geom'))
+    if not point:
+        return None
+
+    open_date = item.get('apvperymd') or item.get('apvpermymd') or '-'
+    close_date = item.get('dcbyymd') or item.get('dcbymd') or '-'
+    raw_id = '|'.join([
+        str(item.get('bplcnm') or '').strip(),
+        str(item.get('rdnwhladdr') or '').strip(),
+        str(item.get('geom') or '').strip(),
+        str(open_date or '').strip(),
+    ])
+
+    return {
+        'id': hashlib.sha1(raw_id.encode('utf-8')).hexdigest(),
+        'name': item.get('bplcnm') or '상점명 없음',
+        'status': item.get('trdstatenm') or '-',
+        'major': item.get('majornm') or '-',
+        'minor': item.get('minornm') or '-',
+        'businessType': item.get('upjongnm') or '-',
+        'address': item.get('rdnwhladdr') or '-',
+        'openDate': open_date,
+        'closeDate': close_date,
+        'lat': point['lat'],
+        'lon': point['lon'],
+    }
+
+
+def _load_busan_commercial_cache():
+    global BUSAN_COMMERCIAL_CACHE
+    if BUSAN_COMMERCIAL_CACHE is not None:
+        return BUSAN_COMMERCIAL_CACHE
+    if not os.path.exists(BUSAN_COMMERCIAL_CACHE_PATH):
+        BUSAN_COMMERCIAL_CACHE = {'items': [], 'meta': {'exists': False}}
+        return BUSAN_COMMERCIAL_CACHE
+    try:
+        with open(BUSAN_COMMERCIAL_CACHE_PATH, encoding='utf-8') as cache_file:
+            BUSAN_COMMERCIAL_CACHE = json.load(cache_file)
+    except (OSError, ValueError):
+        BUSAN_COMMERCIAL_CACHE = {'items': [], 'meta': {'exists': False, 'loadError': True}}
+    return BUSAN_COMMERCIAL_CACHE
+
+
+def _save_busan_commercial_cache(cache_data):
+    global BUSAN_COMMERCIAL_CACHE
+    os.makedirs(os.path.dirname(BUSAN_COMMERCIAL_CACHE_PATH), exist_ok=True)
+    temp_path = f'{BUSAN_COMMERCIAL_CACHE_PATH}.tmp'
+    with open(temp_path, 'w', encoding='utf-8') as cache_file:
+        json.dump(cache_data, cache_file, ensure_ascii=False, separators=(',', ':'))
+    os.replace(temp_path, BUSAN_COMMERCIAL_CACHE_PATH)
+    BUSAN_COMMERCIAL_CACHE = cache_data
+
+
+def _sync_busan_commercial_cache(service_key, search_term=''):
+    start_time = time.time()
+    term_result = _fetch_commercial_items_for_term(service_key, search_term)
+    seen_ids = set()
+    cache_items = []
+    geom_count = 0
+
+    for item in term_result['items']:
+        cached = _normalize_commercial_cache_item(item)
+        if not cached:
+            continue
+        geom_count += 1
+        if cached['id'] in seen_ids:
+            continue
+        seen_ids.add(cached['id'])
+        cache_items.append(cached)
+
+    cache_data = {
+        'meta': {
+            'exists': True,
+            'updatedAt': datetime.now().isoformat(timespec='seconds'),
+            'source': 'BusanCommercialHistoryService',
+            'searchTerm': search_term or 'ALL',
+            'totalCount': term_result['totalCount'],
+            'totalPages': term_result['totalPages'],
+            'requestedPages': term_result['requestedPages'],
+            'rawItemsCount': len(term_result['items']),
+            'withGeomCount': geom_count,
+            'dedupedCount': len(cache_items),
+            'elapsedSeconds': round(time.time() - start_time, 2),
+            'numOfRows': BUSAN_COMMERCIAL_NUM_OF_ROWS,
+        },
+        'items': cache_items,
+    }
+    _save_busan_commercial_cache(cache_data)
+    return cache_data
+
+
+def _stores_with_distance_from_cache(cache_items, lat, lon):
+    stores = []
+    for item in cache_items:
+        try:
+            item_lat = float(item['lat'])
+            item_lon = float(item['lon'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        store = dict(item)
+        store['distanceMeters'] = round(get_distance_meters(lat, lon, item_lat, item_lon), 2)
+        stores.append(store)
+    stores.sort(key=lambda x: x['distanceMeters'])
+    return stores
+
+
+@app.route('/api/busan-commercial/nearby-old', methods=['GET'])
+def api_busan_commercial_nearby():
+    service_key = os.getenv('BUSAN_COMMERCIAL_SERVICE_KEY')
+    if not service_key:
+        return jsonify({
+            'status': 'error',
+            'message': 'BUSAN_COMMERCIAL_SERVICE_KEY is not configured.',
+        }), 500
+
+    try:
+        lat = float(request.args.get('lat', ''))
+        lon = float(request.args.get('lon', ''))
+        if math.isnan(lat) or math.isnan(lon) or math.isinf(lat) or math.isinf(lon):
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({
+            'status': 'error',
+            'message': 'Valid lat and lon query parameters are required.',
+        }), 400
+
+    address = (request.args.get('address') or '부산진구').strip() or '부산진구'
+    page_no = request.args.get('pageNo') or '1'
+    num_of_rows = request.args.get('numOfRows') or '100'
+
+    try:
+        upstream = req_lib.get(
+            BUSAN_COMMERCIAL_ENDPOINT,
+            params={
+                'serviceKey': service_key,
+                'pageNo': page_no,
+                'numOfRows': num_of_rows,
+                'resultType': 'json',
+                'rdnwhladdr': address,
+            },
+            timeout=8,
+        )
+        upstream.raise_for_status()
+        payload = upstream.json()
+    except ValueError:
+        return jsonify({
+            'status': 'error',
+            'message': 'Busan commercial API returned a non-JSON response.',
+        }), 502
+    except req_lib.RequestException as exc:
+        return jsonify({
+            'status': 'error',
+            'message': f'Busan commercial API request failed: {exc}',
+        }), 502
+
+    header = _get_nested(payload, 'response', 'header') or {}
+    if header.get('resultCode') not in (None, '00'):
+        return jsonify({
+            'status': 'error',
+            'message': header.get('resultMsg') or 'Busan commercial API returned an error.',
+            'resultCode': header.get('resultCode'),
+        }), 502
+
+    body = _get_nested(payload, 'response', 'body') or {}
+    item_payload = _get_nested(payload, 'response', 'body', 'items', 'item')
+    items = [item for item in normalize_items(item_payload) if isinstance(item, dict)]
+    total_count = body.get('totalCount')
+    items_with_geom = []
+    stores = []
+    for item in items:
+        point = parse_point_geom(item.get('geom'))
+        if point:
+            items_with_geom.append({**item, 'lat': point['lat'], 'lon': point['lon']})
+        store = _normalize_commercial_store(item, lat, lon)
+        if store:
+            stores.append(store)
+    groups = _group_commercial_stores(stores)
+    within30m = [store for store in stores if store['distanceMeters'] <= 30]
+    within100m = [store for store in stores if store['distanceMeters'] <= 100]
+    within300m = [store for store in stores if store['distanceMeters'] <= 300]
+    within500m = [store for store in stores if store['distanceMeters'] <= 500]
+    distances_sample = [
+        {
+            'name': store.get('bplcnm'),
+            'geom': store.get('geom'),
+            'distance': get_distance_meters(lat, lon, store['lat'], store['lon']),
+        }
+        for store in items_with_geom[:20]
+    ]
+
+    print('Busan API totalCount:', total_count, flush=True)
+    print('Raw items count:', len(items), flush=True)
+    print('Items with geom:', len(items_with_geom), flush=True)
+    print('Distances:', distances_sample, flush=True)
+    print('Within 30m:', len(within30m), flush=True)
+    print('Within 100m:', len(within100m), flush=True)
+    print('Within 300m:', len(within300m), flush=True)
+    print('Within 500m:', len(within500m), flush=True)
+
+    return jsonify({
+        'status': 'success',
+        'hasGps': True,
+        'origin': {'lat': lat, 'lon': lon},
+        'address': address,
+        'groups': groups,
+        'debug': {
+            'apiResponse': payload,
+            'totalCount': total_count,
+            'itemsCount': len(items),
+            'firstItem': items[0] if items else None,
+            'itemsWithGeomCount': len(items_with_geom),
+            'distances': distances_sample,
+            'beforeDistanceFilterCount': len(items_with_geom),
+            'afterDistanceFilterCount': len(within30m),
+            'within30mCount': len(within30m),
+            'within100mCount': len(within100m),
+            'within300mCount': len(within300m),
+            'within500mCount': len(within500m),
+        },
+    })
+
+
+@app.route('/api/busan-commercial/nearby-live', methods=['GET'])
+def api_busan_commercial_nearby_paginated():
+    service_key = os.getenv('BUSAN_COMMERCIAL_SERVICE_KEY')
+    if not service_key:
+        return jsonify({
+            'status': 'error',
+            'message': 'BUSAN_COMMERCIAL_SERVICE_KEY is not configured.',
+        }), 500
+
+    try:
+        lat = float(request.args.get('lat', ''))
+        lon = float(request.args.get('lon', ''))
+        if math.isnan(lat) or math.isnan(lon) or math.isinf(lat) or math.isinf(lon):
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({
+            'status': 'error',
+            'message': 'Valid lat and lon query parameters are required.',
+        }), 400
+
+    address = (request.args.get('address') or '부산진구').strip() or '부산진구'
+    fallback_address = (request.args.get('address') or '부산진구').strip() or '부산진구'
+    address = fallback_address
+    fallback_address = (request.args.get('address') or '\ubd80\uc0b0\uc9c4\uad6c').strip() or '\ubd80\uc0b0\uc9c4\uad6c'
+    address = fallback_address
+    search_terms, reverse_address = _build_busan_commercial_search_terms(lat, lon, fallback_address)
+    collected_items = []
+    seen_keys = set()
+    term_summaries = []
+    requested_pages = 0
+    first_payload = None
+    selected_terms = []
+    probe_results = []
+    search_filter_ignored = False
+
+    try:
+        for search_term in search_terms:
+            page = _fetch_commercial_page(service_key, search_term, 1)
+            total = _parse_positive_int(page['totalCount'])
+            probe_results.append({
+                'term': search_term,
+                'totalCount': page['totalCount'],
+                'parsedTotalCount': total,
+                'firstPageItemsCount': len(page['items']),
+            })
+
+        positive_terms = [probe for probe in probe_results if probe['parsedTotalCount'] > 0]
+        if positive_terms:
+            unique_counts = {probe['parsedTotalCount'] for probe in positive_terms}
+            if len(unique_counts) == 1 and len(positive_terms) > 1:
+                search_filter_ignored = True
+                selected_terms = [fallback_address]
+            else:
+                selected = min(positive_terms, key=lambda x: x['parsedTotalCount'])
+                selected_terms = [selected['term']]
+        else:
+            selected_terms = [fallback_address]
+
+        for search_term in selected_terms:
+            term_result = _fetch_commercial_items_for_term(service_key, search_term)
+            requested_pages += term_result['requestedPages']
+            if first_payload is None:
+                first_payload = term_result['firstPayload']
+            term_items = term_result['items']
+            for item in term_items:
+                key = _commercial_item_key(item)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                collected_items.append(item)
+            term_summaries.append({
+                'term': search_term,
+                'totalCount': term_result['totalCount'],
+                'totalPages': term_result['totalPages'],
+                'requestedPages': term_result['requestedPages'],
+                'itemsCount': len(term_items),
+            })
+    except RuntimeError as exc:
+        return jsonify({
+            'status': 'error',
+            'message': str(exc),
+        }), 502
+    except ValueError:
+        return jsonify({
+            'status': 'error',
+            'message': 'Busan commercial API returned a non-JSON response.',
+        }), 502
+    except req_lib.RequestException as exc:
+        return jsonify({
+            'status': 'error',
+            'message': f'Busan commercial API request failed: {exc}',
+        }), 502
+
+    items_with_geom = []
+    stores = []
+    for item in collected_items:
+        point = parse_point_geom(item.get('geom'))
+        if not point:
+            continue
+        items_with_geom.append({**item, 'lat': point['lat'], 'lon': point['lon']})
+        store = _normalize_commercial_store(item, lat, lon)
+        if store:
+            stores.append(store)
+
+    stores.sort(key=lambda x: x['distanceMeters'])
+    groups = _group_commercial_stores(stores)
+    within30m = [store for store in stores if store['distanceMeters'] <= 30]
+    nearest_stores = stores[:10]
+    nearest_debug = [
+        {
+            'name': store['name'],
+            'address': store['address'],
+            'distanceMeters': store['distanceMeters'],
+            'lat': store['lat'],
+            'lon': store['lon'],
+        }
+        for store in nearest_stores
+    ]
+
+    print('Busan API search terms:', search_terms, flush=True)
+    print('Busan API probe results:', probe_results, flush=True)
+    print('Selected search terms:', selected_terms, flush=True)
+    print('Search filter ignored:', search_filter_ignored, flush=True)
+    print('Reverse geocode address:', reverse_address, flush=True)
+    print('Busan API term summaries:', term_summaries, flush=True)
+    print('Requested pages:', requested_pages, flush=True)
+    print('Fetched items count:', len(collected_items), flush=True)
+    print('Items with geom:', len(items_with_geom), flush=True)
+    print('Nearest stores TOP 10:', nearest_debug, flush=True)
+    print('Within 30m:', len(within30m), flush=True)
+
+    return jsonify({
+        'status': 'success',
+        'hasGps': True,
+        'origin': {'lat': lat, 'lon': lon},
+        'address': address,
+        'summary': {
+            'totalFetched': len(collected_items),
+            'withGeom': len(items_with_geom),
+            'within30mCount': len(within30m),
+            'nearestDistanceMeters': nearest_stores[0]['distanceMeters'] if nearest_stores else None,
+            'requestedPages': requested_pages,
+            'searchTerms': search_terms,
+            'selectedTerms': selected_terms,
+            'searchFilterIgnored': search_filter_ignored,
+            'termSummaries': term_summaries,
+        },
+        'groups': groups,
+        'nearestStores': nearest_stores,
+        'debug': {
+            'apiResponse': first_payload,
+            'searchTerms': search_terms,
+            'selectedTerms': selected_terms,
+            'searchFilterIgnored': search_filter_ignored,
+            'probeResults': probe_results,
+            'reverseAddress': reverse_address,
+            'termSummaries': term_summaries,
+            'requestedPages': requested_pages,
+            'itemsCount': len(collected_items),
+            'firstItem': collected_items[0] if collected_items else None,
+            'itemsWithGeomCount': len(items_with_geom),
+            'nearestStores': nearest_debug,
+            'within30mCount': len(within30m),
+        },
+    })
+
+
+@app.route('/api/busan-commercial/cache/status', methods=['GET'])
+def api_busan_commercial_cache_status():
+    cache_data = _load_busan_commercial_cache()
+    items = cache_data.get('items') or []
+    meta = cache_data.get('meta') or {}
+    return jsonify({
+        'status': 'success',
+        'cacheReady': bool(items),
+        'meta': meta,
+        'itemsCount': len(items),
+    })
+
+
+@app.route('/api/busan-commercial/sync', methods=['GET', 'POST'])
+def api_busan_commercial_sync():
+    service_key = os.getenv('BUSAN_COMMERCIAL_SERVICE_KEY')
+    if not service_key:
+        return jsonify({
+            'status': 'error',
+            'message': 'BUSAN_COMMERCIAL_SERVICE_KEY is not configured.',
+        }), 500
+
+    search_term = (request.args.get('address') or request.args.get('searchTerm') or '').strip()
+    try:
+        cache_data = _sync_busan_commercial_cache(service_key, search_term)
+    except RuntimeError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 502
+    except ValueError:
+        return jsonify({
+            'status': 'error',
+            'message': 'Busan commercial API returned a non-JSON response.',
+        }), 502
+    except req_lib.RequestException as exc:
+        return jsonify({
+            'status': 'error',
+            'message': f'Busan commercial API request failed: {exc}',
+        }), 502
+
+    return jsonify({
+        'status': 'success',
+        'cacheReady': True,
+        'meta': cache_data.get('meta') or {},
+        'itemsCount': len(cache_data.get('items') or []),
+    })
+
+
+@app.route('/api/busan-commercial/nearby', methods=['GET'])
+def api_busan_commercial_nearby_cached():
+    try:
+        lat = float(request.args.get('lat', ''))
+        lon = float(request.args.get('lon', ''))
+        if math.isnan(lat) or math.isnan(lon) or math.isinf(lat) or math.isinf(lon):
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({
+            'status': 'error',
+            'message': 'Valid lat and lon query parameters are required.',
+        }), 400
+
+    cache_data = _load_busan_commercial_cache()
+    cache_items = cache_data.get('items') or []
+    cache_meta = cache_data.get('meta') or {}
+    if not cache_items:
+        return jsonify({
+            'status': 'error',
+            'code': 'CACHE_REQUIRED',
+            'message': '부산 상권 캐시가 없습니다. 먼저 상점 데이터 업데이트를 실행해주세요.',
+            'cacheReady': False,
+        }), 409
+
+    stores = _stores_with_distance_from_cache(cache_items, lat, lon)
+    groups = _group_commercial_stores(stores)
+    within30m = [store for store in stores if store['distanceMeters'] <= 30]
+    nearest_stores = stores[:10]
+
+    print('Busan commercial cache items:', len(cache_items), flush=True)
+    print('Cache updated at:', cache_meta.get('updatedAt'), flush=True)
+    print('Nearest stores TOP 10:', [
+        {'name': store['name'], 'distanceMeters': store['distanceMeters']}
+        for store in nearest_stores
+    ], flush=True)
+    print('Within 30m:', len(within30m), flush=True)
+
+    return jsonify({
+        'status': 'success',
+        'hasGps': True,
+        'origin': {'lat': lat, 'lon': lon},
+        'cache': {
+            'ready': True,
+            'meta': cache_meta,
+        },
+        'summary': {
+            'totalFetched': cache_meta.get('rawItemsCount'),
+            'withGeom': cache_meta.get('withGeomCount'),
+            'cacheItemsCount': len(cache_items),
+            'within30mCount': len(within30m),
+            'nearestDistanceMeters': nearest_stores[0]['distanceMeters'] if nearest_stores else None,
+        },
+        'groups': groups,
+        'nearestStores': nearest_stores,
+        'debug': {
+            'cacheMeta': cache_meta,
+            'itemsCount': len(cache_items),
+            'nearestStores': [
+                {
+                    'name': store['name'],
+                    'address': store['address'],
+                    'distanceMeters': store['distanceMeters'],
+                    'lat': store['lat'],
+                    'lon': store['lon'],
+                }
+                for store in nearest_stores
+            ],
+            'within30mCount': len(within30m),
+        },
+    })
 
 
 def decode_base64_image(data_url):
