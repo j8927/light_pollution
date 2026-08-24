@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>분석 결과 - 빛 공해 법규 위반 탐지 시스템</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260824-2" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260824-4" />
 </head>
 <body>
   <div class="page-shell">
@@ -26,7 +26,7 @@
       <section class="card result-card" id="allZonesSection" style="display:none;"></section>
       <div class="result-grid">
         <section class="card result-card"><div class="card-head"><h3>분석 이미지</h3></div><div class="analysis-image-wrap"><img id="resultImage" src="" alt="분석 이미지" /><div id="overlayContainer"></div></div><div class="legend-row"><span class="legend legend-safe">정상</span><span class="legend legend-warning">주의</span><span class="legend legend-danger">위험</span></div></section>
-        <section class="card result-card"><div class="card-head"><h3>상세 요약</h3></div><div class="summary-list"><div><span>탐지 객체 수</span><strong id="summaryDetectedCount">0개</strong></div><div><span>법규 위반 객체</span><strong id="summaryViolationCount">0개</strong></div><div><span>최대 밝기 영역</span><strong id="summaryMaxBright">-</strong></div><div><span>법규 위험 수준</span><strong id="summaryRiskLevel" class="danger">-</strong></div><div><span>조명환경관리구역</span><strong id="summaryZone">-</strong></div></div></section>
+        <section class="card result-card"><div class="card-head"><h3>상세 요약</h3></div><div class="summary-list"><div><span>탐지 객체 수</span><strong id="summaryDetectedCount">0개</strong></div><div><span>확인된 간판명</span><strong id="summaryStoreNames">-</strong></div><div><span>법규 위반 객체</span><strong id="summaryViolationCount">0개</strong></div><div><span>최대 밝기 영역</span><strong id="summaryMaxBright">-</strong></div><div><span>법규 위험 수준</span><strong id="summaryRiskLevel" class="danger">-</strong></div><div><span>조명환경관리구역</span><strong id="summaryZone">-</strong></div></div></section>
       </div>
       <section class="card result-card"><div class="card-head"><h3>세부 분석 결과</h3></div><div class="detail-grid"><div class="detail-box"><strong>탐지 객체 수</strong><p id="detailDetectedCount">0개</p></div><div class="detail-box"><strong>위반 건수</strong><p id="detailBrightCount">0개</p></div><div class="detail-box"><strong>최대 과태료 객체</strong><p id="detailTopObject">-</p></div><div class="detail-box"><strong>총 과태료</strong><p id="detailRiskLevel" class="danger">-</p></div><div class="detail-box"><strong>위반 단계</strong><p id="detailConfidence">-</p></div></div></section>
       <section class="card result-card commercial-card" id="busanCommercialSection">
@@ -43,6 +43,6 @@
     </main>
     <footer class="site-footer"><div class="container footer-grid"><div><div class="logo-row"><div class="logo-icon">💡</div><div>빛 공해 법규 위반 탐지 시스템</div></div><p>AI 기반 빛 공해 분석 서비스로 야간 환경을 안전하게 관리합니다.</p></div><div><p class="footer-title">바로가기</p><a href="{{ url_for('home') }}#hero">서비스 소개</a><a href="{{ url_for('home') }}#upload">분석하기</a></div><div><p class="footer-title">문의</p><p>조태승 (팀장): 2143412@donga.ac.kr</p><p>010-8603-8271</p><p>곽승우: 2353660@donga.ac.kr</p><p>김동규: 2353695@donga.ac.kr</p><p>김승주: 2353716@donga.ac.kr</p><p>동아대학교 승학캠퍼스</p></div></div><div class="container copyright"> 2026 AI 빛 공해 분석. All rights reserved.</div></footer>
   </div>
-  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260824-2" defer></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260824-5" defer></script>
 </body>
 </html>

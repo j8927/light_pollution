@@ -978,7 +978,8 @@ function analysisPageInit() {
         const objectNames = apiResult.detected.map((o) => {
           const unit = o.unit || (o.type === "가로등" ? "lux" : "cd/m²");
           const measured = o.measuredValue ?? (unit === "lux" ? o.illuminanceLux : o.luminanceCdM2) ?? o.brightness;
-          return `${o.name}(${Math.round(measured)} ${unit}, 추정)`;
+          const displayName = o.type === "간판" && o.storeName ? o.storeName : o.name;
+          return `${displayName}(${Math.round(measured)} ${unit}, 추정)`;
         }).join(", ");
         const detectedObjectsEl = document.getElementById("detectedObjects");
         const detectedRiskEl = document.getElementById("detectedRisk");
@@ -1034,6 +1035,11 @@ function resultPageInit() {
   if (resultTime) resultTime.textContent = time;
 
   const detected = JSON.parse(sessionStorage.getItem("light_detected") || "[]");
+  const storeNames = [...new Set(detected
+    .filter((item) => item.type === "간판")
+    .map((item) => item.storeName?.trim())
+    .filter(Boolean))];
+  const signboardCount = detected.filter((item) => item.type === "간판" || item.name === "light_signboard" || item.name === "street sign").length;
   const modelStatus = sessionStorage.getItem("light_modelStatus") || "모델 정보 없음";
   if (modelStatusEl) modelStatusEl.textContent = modelStatus;
   const overall = sessionStorage.getItem("light_overall") || "미탐지";
@@ -1096,7 +1102,9 @@ function resultPageInit() {
       const fineText = item.fineAmount > 0 ? `${item.fineAmount}만원` : "없음";
       const measuredValue = item.measuredValue ?? item.illuminanceLux ?? item.luminanceCdM2 ?? item.brightness ?? "-";
       const unit = item.unit || (item.type === "가로등" ? "lux" : "cd/m²");
-      return `${item.name || "-"} / ${item.type || "-"} / ${item.pollutionCategory || "미분류"} / ${measuredValue}${typeof measuredValue === "number" ? ` ${unit}` : ""} / ${stageText} / ${fineText}`;
+      const storeText = item.type === "간판" && item.storeName ? ` / 상호명: ${item.storeName}` : "";
+      const ocrText = item.type === "간판" && item.ocrText ? ` / OCR: ${item.ocrText}` : "";
+      return `${item.name || "-"}${storeText}${ocrText} / ${item.type || "-"} / ${item.pollutionCategory || "미분류"} / ${measuredValue}${typeof measuredValue === "number" ? ` ${unit}` : ""} / ${stageText} / ${fineText}`;
     }).join("\n");
     return [
       "빛 공해 법규 위반 탐지 리포트",
@@ -1169,7 +1177,13 @@ function resultPageInit() {
   if (summaryViolation) summaryViolation.textContent = totalFine > 0 ? `${totalFine}만원` : "없음";
   if (summaryConfidence) summaryConfidence.textContent = `${violationCount}건`;
   if (resultDetected) {
-    resultDetected.textContent = detected.map((d) => `${d.name}(${d.pollutionCategory || "미분류"}/${d.violationStage || '준수'})`).join(", ") || "탐지된 객체 없음";
+    resultDetected.textContent = detected.map((d) => `${d.type === "간판" && d.storeName ? d.storeName : d.name}(${d.pollutionCategory || "미분류"}/${d.violationStage || '준수'})`).join(", ") || "탐지된 객체 없음";
+  }
+  const summaryStoreNames = document.getElementById("summaryStoreNames");
+  if (summaryStoreNames) {
+    summaryStoreNames.textContent = storeNames.length
+      ? storeNames.join(", ")
+      : signboardCount > 0 ? "간판명 인식 실패" : "탐지된 간판 없음";
   }
   if (riskSummary) riskSummary.textContent = riskSum;
   const resultCaptureEl = document.getElementById("resultCapture");
@@ -1275,9 +1289,17 @@ function resultPageInit() {
       popup.style.pointerEvents = "all";
 
       const fineText = item.fineAmount > 0 ? `<span style="color:#d63939;font-weight:700;">${item.fineAmount}만원</span>` : '<span style="color:#1f9d5d;">없음</span>';
+      const isSignboard = item.type === "간판";
+      const storeInfo = isSignboard && item.storeName
+        ? `상호명: <b>${escapeHtml(item.storeName)}</b><br/>`
+        : "";
+      const ocrInfo = isSignboard && item.ocrText
+        ? `인식 글자: <span title="${escapeHtml(item.ocrText)}">${escapeHtml(item.ocrText)}</span> (${Math.round(Number(item.ocrConfidence || 0) * 100)}%)<br/>`
+        : "";
       popup.innerHTML = `
         <button class="popup-close" title="닫기">×</button>
-        <strong>${item.name} (${item.lightType || item.type})</strong>
+        <strong>${escapeHtml(isSignboard && item.storeName ? item.storeName : item.name)} (${escapeHtml(item.lightType || item.type)})</strong>
+        ${storeInfo}${ocrInfo}
         빛 공해 분류: <b>${item.pollutionCategory || "미분류"}</b> <small>${item.pollutionCategoryDesc || ""}</small><br/>
         측정값(참고용 추정): <b>${Math.round(measured)} ${lawUnit}</b><br/>
         ROI 밝기 평균/95%: ${Math.round(item.brightness ?? 0)} / ${Math.round(item.brightnessP95 ?? item.brightness ?? 0)}<br/>

@@ -140,6 +140,7 @@ a{color:inherit; text-decoration:none;}
 .legend-danger{background:#ffe8ea; color:#a8212e;}
 .summary-list{display:grid; gap:8px; margin-top:8px;}
 .summary-list div{display:flex; justify-content:space-between; border-bottom:1px solid #eef1f7; padding-bottom:6px;}
+.summary-list strong{max-width:62%; text-align:right; overflow-wrap:anywhere;}
 .summary-list strong{color:#1a2e58;}
 .danger{color:#d63939; font-weight:700;}
 .detail-grid{display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-top:10px;}

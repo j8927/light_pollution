@@ -12,6 +12,7 @@ from datetime import datetime
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
+from signboard_ocr import recognize_signboard
 import requests as req_lib  # Nominatim 역지오코딩용
 
 app = Flask(__name__)
@@ -1955,6 +1956,15 @@ def analyze_api():
                 else:
                     cat = classify_by_geometry(x1, y1, x2, y2, h, w)
 
+                ocr_result = {
+                    'storeName': None,
+                    'ocrText': '',
+                    'ocrConfidence': 0.0,
+                    'ocrStatus': 'not a signboard',
+                }
+                if cat == '간판' or label in ('street sign', 'stop sign', 'light_signboard'):
+                    ocr_result = recognize_signboard(cropped)
+
                 light_type = LIGHT_TYPE_MAP.get(cat, '장식조명')
                 pollution_category = classify_pollution_category(
                     cat,
@@ -1981,6 +1991,10 @@ def analyze_api():
                     'type':             cat,
                     'lightType':        light_type,
                     'confidence':       round(conf, 3),
+                    'storeName':        ocr_result['storeName'],
+                    'ocrText':          ocr_result['ocrText'],
+                    'ocrConfidence':    ocr_result['ocrConfidence'],
+                    'ocrStatus':        ocr_result['ocrStatus'],
                     'brightness':       int(round(adjusted_metrics['brightness'])),
                     'rawBrightness':    int(round(brightness)),
                     'luminanceCdM2':    round(adjusted_metrics['luminance_cd_m2_avg'], 1),
@@ -2028,6 +2042,7 @@ def analyze_api():
 
             # 광원 관련 객체(간판·가로등·조명)만 유지, 너무 어두운 객체 제외
             detected = [d for d in detected if should_keep_detection(d)]
+
         except Exception:
             detected = []
 
