@@ -630,7 +630,79 @@ function renderCommercialGroup(title, stores) {
   `;
 }
 
-function setupBusanCommercialLookup(rawGps) {
+function normalizeStoreName(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("ko-KR")
+    .replace(/[^가-힣a-z0-9]/g, "");
+}
+
+function levenshteinSimilarity(left, right) {
+  if (left === right) return 1;
+  if (!left.length || !right.length) return 0;
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    let diagonal = previous[0];
+    previous[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const old = previous[j];
+      previous[j] = Math.min(
+        previous[j] + 1,
+        previous[j - 1] + 1,
+        diagonal + (left[i - 1] === right[j - 1] ? 0 : 1),
+      );
+      diagonal = old;
+    }
+  }
+  return 1 - previous[right.length] / Math.max(left.length, right.length);
+}
+
+function bigramSimilarity(left, right) {
+  if (left === right) return 1;
+  if (left.length < 2 || right.length < 2) return 0;
+  const counts = new Map();
+  for (let i = 0; i < left.length - 1; i += 1) {
+    const gram = left.slice(i, i + 2);
+    counts.set(gram, (counts.get(gram) || 0) + 1);
+  }
+  let overlap = 0;
+  for (let i = 0; i < right.length - 1; i += 1) {
+    const gram = right.slice(i, i + 2);
+    const count = counts.get(gram) || 0;
+    if (count > 0) {
+      overlap += 1;
+      counts.set(gram, count - 1);
+    }
+  }
+  return (2 * overlap) / (left.length + right.length - 2);
+}
+
+function storeNameSimilarity(ocrName, commercialName) {
+  const left = normalizeStoreName(ocrName);
+  const right = normalizeStoreName(commercialName);
+  if (left.length < 2 || right.length < 2) return 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) {
+    const shorterLength = Math.min(left.length, right.length);
+    return shorterLength >= 3 ? 0.9 : 0.72;
+  }
+  return Math.max(levenshteinSimilarity(left, right), bigramSimilarity(left, right));
+}
+
+function findBestCommercialMatch(ocrStoreNames, stores, threshold = 0.62) {
+  let best = null;
+  ocrStoreNames.forEach((ocrName) => {
+    stores.forEach((store) => {
+      const score = storeNameSimilarity(ocrName, store.name);
+      if (!best || score > best.score || (score === best.score && Number(store.distanceMeters) < Number(best.store.distanceMeters))) {
+        best = { ocrName, store, score };
+      }
+    });
+  });
+  return best && best.score >= threshold ? best : null;
+}
+
+function setupBusanCommercialLookup(rawGps, ocrStoreNames = []) {
   const lookupBtn = document.getElementById("commercialLookupBtn");
   const messageEl = document.getElementById("commercialGpsMessage");
   const resultsEl = document.getElementById("commercialResults");
@@ -685,6 +757,19 @@ function setupBusanCommercialLookup(rawGps) {
       const within10m = groups.within10m || [];
       const within30m = groups.within30m || [];
       const nearestStores = data.nearestStores || [];
+      const matchPool = [...within5m, ...within10m, ...within30m, ...nearestStores]
+        .filter((store, index, stores) => stores.findIndex((candidate) =>
+          candidate.name === store.name && candidate.address === store.address
+        ) === index);
+      const nameMatch = findBestCommercialMatch(ocrStoreNames, matchPool);
+
+      if (nameMatch) {
+        const percent = Math.round(nameMatch.score * 100);
+        messageEl.textContent = `인식된 상호명 “${nameMatch.ocrName}”과 가장 유사한 주변 상점을 찾았습니다. (명칭 유사도 ${percent}%)`;
+        resultsEl.innerHTML = renderCommercialGroup("확인된 상호명과 일치하는 주변 상점", [nameMatch.store]);
+        return;
+      }
+
       const nearbyTotal = within5m.length + within10m.length + within30m.length;
       const nearbyEmptyMessage = nearbyTotal
         ? ""
@@ -1218,7 +1303,7 @@ function resultPageInit() {
   const summaryZoneEl = document.getElementById("summaryZone");
   if (resultZoneEl) resultZoneEl.textContent = zoneText;
   if (summaryZoneEl) summaryZoneEl.textContent = zoneText;
-  setupBusanCommercialLookup(rawGps);
+  setupBusanCommercialLookup(rawGps, storeNames);
 
   // GPS 없는 경우 4개 구역 전체 시뮬레이션 테이블
   const allZonesSection = document.getElementById("allZonesSection");
