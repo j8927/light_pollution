@@ -1266,20 +1266,13 @@ function resultPageInit() {
     }
 
     function showPopup(item, box, popupClass, measured, lawUnit) {
+      // 설명창은 한 번에 하나만 표시한다.
+      popupLayer.replaceChildren();
       const id = ++popupIdCounter;
       const popup = document.createElement("div");
       popup.className = `overlay-popup ${popupClass}`;
       popup.dataset.popupId = id;
       popup.style.pointerEvents = "all";
-
-      // 이미지를 기준으로 위치 계산
-      // 팝업은 바운딩박스 아래 또는 오른쪽에
-      let top = parseFloat(box.style.top) + parseFloat(box.style.height);
-      let left = parseFloat(box.style.left);
-      // 화면 오른쪽 밖으로 나가면 왼쪽으로
-      if (left > 55) left = Math.max(0, parseFloat(box.style.left) - 20);
-      popup.style.top = `${Math.min(top, 88)}%`;
-      popup.style.left = `${left}%`;
 
       const fineText = item.fineAmount > 0 ? `<span style="color:#d63939;font-weight:700;">${item.fineAmount}만원</span>` : '<span style="color:#1f9d5d;">없음</span>';
       popup.innerHTML = `
@@ -1299,6 +1292,41 @@ function resultPageInit() {
         removePopup(id);
       });
       popupLayer.appendChild(popup);
+
+      // 실제 팝업 크기를 측정한 뒤 이미지 경계 안으로 위치를 보정한다.
+      const padding = 8;
+      const gap = 6;
+      const layerWidth = popupLayer.clientWidth;
+      const layerHeight = popupLayer.clientHeight;
+      const boxLeft = box.offsetLeft;
+      const boxTop = box.offsetTop;
+      const boxRight = boxLeft + box.offsetWidth;
+      const boxBottom = boxTop + box.offsetHeight;
+
+      popup.style.maxWidth = `${Math.max(1, layerWidth - padding * 2)}px`;
+      popup.style.maxHeight = `${Math.max(1, layerHeight - padding * 2)}px`;
+
+      const popupWidth = popup.offsetWidth;
+      const popupHeight = popup.offsetHeight;
+      let left = boxLeft;
+      let top;
+
+      // 기본적으로 박스 아래에 표시하고, 공간이 부족하면 위로 전환한다.
+      if (boxBottom + gap + popupHeight <= layerHeight - padding) {
+        top = boxBottom + gap;
+      } else if (boxTop - gap - popupHeight >= padding) {
+        top = boxTop - gap - popupHeight;
+      } else {
+        top = Math.min(Math.max(boxTop, padding), layerHeight - padding - popupHeight);
+      }
+
+      // 오른쪽이 잘리면 박스 오른쪽에 맞춘 후 다시 이미지 안으로 제한한다.
+      if (left + popupWidth > layerWidth - padding) left = boxRight - popupWidth;
+      left = Math.min(Math.max(left, padding), layerWidth - padding - popupWidth);
+      top = Math.min(Math.max(top, padding), layerHeight - padding - popupHeight);
+
+      popup.style.left = `${left}px`;
+      popup.style.top = `${top}px`;
       return id;
     }
 
