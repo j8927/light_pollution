@@ -12,7 +12,7 @@ from datetime import datetime
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
-from signboard_ocr import recognize_signboard
+from signboard_ocr import crop_signboard_region, recognize_signboard
 import requests as req_lib  # Nominatim 역지오코딩용
 
 app = Flask(__name__)
@@ -1963,7 +1963,10 @@ def analyze_api():
                     'ocrStatus': 'not a signboard',
                 }
                 if cat == '간판' or label in ('street sign', 'stop sign', 'light_signboard'):
-                    ocr_result = recognize_signboard(cropped)
+                    # The detector often frames only the brightest headline. A wider
+                    # OCR crop preserves smaller brand text immediately above/below it.
+                    ocr_crop = crop_signboard_region(img, (x1, y1, x2, y2))
+                    ocr_result = recognize_signboard(ocr_crop)
 
                 light_type = LIGHT_TYPE_MAP.get(cat, '장식조명')
                 pollution_category = classify_pollution_category(
