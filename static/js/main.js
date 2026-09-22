@@ -630,7 +630,79 @@ function renderCommercialGroup(title, stores) {
   `;
 }
 
-function setupBusanCommercialLookup(rawGps) {
+function normalizeStoreName(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("ko-KR")
+    .replace(/[^가-힣a-z0-9]/g, "");
+}
+
+function levenshteinSimilarity(left, right) {
+  if (left === right) return 1;
+  if (!left.length || !right.length) return 0;
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    let diagonal = previous[0];
+    previous[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const old = previous[j];
+      previous[j] = Math.min(
+        previous[j] + 1,
+        previous[j - 1] + 1,
+        diagonal + (left[i - 1] === right[j - 1] ? 0 : 1),
+      );
+      diagonal = old;
+    }
+  }
+  return 1 - previous[right.length] / Math.max(left.length, right.length);
+}
+
+function bigramSimilarity(left, right) {
+  if (left === right) return 1;
+  if (left.length < 2 || right.length < 2) return 0;
+  const counts = new Map();
+  for (let i = 0; i < left.length - 1; i += 1) {
+    const gram = left.slice(i, i + 2);
+    counts.set(gram, (counts.get(gram) || 0) + 1);
+  }
+  let overlap = 0;
+  for (let i = 0; i < right.length - 1; i += 1) {
+    const gram = right.slice(i, i + 2);
+    const count = counts.get(gram) || 0;
+    if (count > 0) {
+      overlap += 1;
+      counts.set(gram, count - 1);
+    }
+  }
+  return (2 * overlap) / (left.length + right.length - 2);
+}
+
+function storeNameSimilarity(ocrName, commercialName) {
+  const left = normalizeStoreName(ocrName);
+  const right = normalizeStoreName(commercialName);
+  if (left.length < 2 || right.length < 2) return 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) {
+    const shorterLength = Math.min(left.length, right.length);
+    return shorterLength >= 3 ? 0.9 : 0.72;
+  }
+  return Math.max(levenshteinSimilarity(left, right), bigramSimilarity(left, right));
+}
+
+function findBestCommercialMatch(ocrStoreNames, stores, threshold = 0.62) {
+  let best = null;
+  ocrStoreNames.forEach((ocrName) => {
+    stores.forEach((store) => {
+      const score = storeNameSimilarity(ocrName, store.name);
+      if (!best || score > best.score || (score === best.score && Number(store.distanceMeters) < Number(best.store.distanceMeters))) {
+        best = { ocrName, store, score };
+      }
+    });
+  });
+  return best && best.score >= threshold ? best : null;
+}
+
+function setupBusanCommercialLookup(rawGps, ocrStoreNames = []) {
   const lookupBtn = document.getElementById("commercialLookupBtn");
   const messageEl = document.getElementById("commercialGpsMessage");
   const resultsEl = document.getElementById("commercialResults");
@@ -685,6 +757,19 @@ function setupBusanCommercialLookup(rawGps) {
       const within10m = groups.within10m || [];
       const within30m = groups.within30m || [];
       const nearestStores = data.nearestStores || [];
+      const matchPool = [...within5m, ...within10m, ...within30m, ...nearestStores]
+        .filter((store, index, stores) => stores.findIndex((candidate) =>
+          candidate.name === store.name && candidate.address === store.address
+        ) === index);
+      const nameMatch = findBestCommercialMatch(ocrStoreNames, matchPool);
+
+      if (nameMatch) {
+        const percent = Math.round(nameMatch.score * 100);
+        messageEl.textContent = `인식된 상호명 “${nameMatch.ocrName}”과 가장 유사한 주변 상점을 찾았습니다. (명칭 유사도 ${percent}%)`;
+        resultsEl.innerHTML = renderCommercialGroup("확인된 상호명과 일치하는 주변 상점", [nameMatch.store]);
+        return;
+      }
+
       const nearbyTotal = within5m.length + within10m.length + within30m.length;
       const nearbyEmptyMessage = nearbyTotal
         ? ""
@@ -978,7 +1063,8 @@ function analysisPageInit() {
         const objectNames = apiResult.detected.map((o) => {
           const unit = o.unit || (o.type === "가로등" ? "lux" : "cd/m²");
           const measured = o.measuredValue ?? (unit === "lux" ? o.illuminanceLux : o.luminanceCdM2) ?? o.brightness;
-          return `${o.name}(${Math.round(measured)} ${unit}, 추정)`;
+          const displayName = o.type === "간판" && o.storeName ? o.storeName : o.name;
+          return `${displayName}(${Math.round(measured)} ${unit}, 추정)`;
         }).join(", ");
         const detectedObjectsEl = document.getElementById("detectedObjects");
         const detectedRiskEl = document.getElementById("detectedRisk");
@@ -1034,6 +1120,11 @@ function resultPageInit() {
   if (resultTime) resultTime.textContent = time;
 
   const detected = JSON.parse(sessionStorage.getItem("light_detected") || "[]");
+  const storeNames = [...new Set(detected
+    .filter((item) => item.type === "간판")
+    .map((item) => item.storeName?.trim())
+    .filter(Boolean))];
+  const signboardCount = detected.filter((item) => item.type === "간판" || item.name === "light_signboard" || item.name === "street sign").length;
   const modelStatus = sessionStorage.getItem("light_modelStatus") || "모델 정보 없음";
   if (modelStatusEl) modelStatusEl.textContent = modelStatus;
   const overall = sessionStorage.getItem("light_overall") || "미탐지";
@@ -1096,7 +1187,9 @@ function resultPageInit() {
       const fineText = item.fineAmount > 0 ? `${item.fineAmount}만원` : "없음";
       const measuredValue = item.measuredValue ?? item.illuminanceLux ?? item.luminanceCdM2 ?? item.brightness ?? "-";
       const unit = item.unit || (item.type === "가로등" ? "lux" : "cd/m²");
-      return `${item.name || "-"} / ${item.type || "-"} / ${item.pollutionCategory || "미분류"} / ${measuredValue}${typeof measuredValue === "number" ? ` ${unit}` : ""} / ${stageText} / ${fineText}`;
+      const storeText = item.type === "간판" && item.storeName ? ` / 상호명: ${item.storeName}` : "";
+      const ocrText = item.type === "간판" && item.ocrText ? ` / OCR: ${item.ocrText}` : "";
+      return `${item.name || "-"}${storeText}${ocrText} / ${item.type || "-"} / ${item.pollutionCategory || "미분류"} / ${measuredValue}${typeof measuredValue === "number" ? ` ${unit}` : ""} / ${stageText} / ${fineText}`;
     }).join("\n");
     return [
       "빛 공해 법규 위반 탐지 리포트",
@@ -1169,7 +1262,13 @@ function resultPageInit() {
   if (summaryViolation) summaryViolation.textContent = totalFine > 0 ? `${totalFine}만원` : "없음";
   if (summaryConfidence) summaryConfidence.textContent = `${violationCount}건`;
   if (resultDetected) {
-    resultDetected.textContent = detected.map((d) => `${d.name}(${d.pollutionCategory || "미분류"}/${d.violationStage || '준수'})`).join(", ") || "탐지된 객체 없음";
+    resultDetected.textContent = detected.map((d) => `${d.type === "간판" && d.storeName ? d.storeName : d.name}(${d.pollutionCategory || "미분류"}/${d.violationStage || '준수'})`).join(", ") || "탐지된 객체 없음";
+  }
+  const summaryStoreNames = document.getElementById("summaryStoreNames");
+  if (summaryStoreNames) {
+    summaryStoreNames.textContent = storeNames.length
+      ? storeNames.join(", ")
+      : signboardCount > 0 ? "간판명 인식 실패" : "탐지된 간판 없음";
   }
   if (riskSummary) riskSummary.textContent = riskSum;
   const resultCaptureEl = document.getElementById("resultCapture");
@@ -1204,7 +1303,7 @@ function resultPageInit() {
   const summaryZoneEl = document.getElementById("summaryZone");
   if (resultZoneEl) resultZoneEl.textContent = zoneText;
   if (summaryZoneEl) summaryZoneEl.textContent = zoneText;
-  setupBusanCommercialLookup(rawGps);
+  setupBusanCommercialLookup(rawGps, storeNames);
 
   // GPS 없는 경우 4개 구역 전체 시뮬레이션 테이블
   const allZonesSection = document.getElementById("allZonesSection");
@@ -1275,9 +1374,17 @@ function resultPageInit() {
       popup.style.pointerEvents = "all";
 
       const fineText = item.fineAmount > 0 ? `<span style="color:#d63939;font-weight:700;">${item.fineAmount}만원</span>` : '<span style="color:#1f9d5d;">없음</span>';
+      const isSignboard = item.type === "간판";
+      const storeInfo = isSignboard && item.storeName
+        ? `상호명: <b>${escapeHtml(item.storeName)}</b><br/>`
+        : "";
+      const ocrInfo = isSignboard && item.ocrText
+        ? `인식 글자: <span title="${escapeHtml(item.ocrText)}">${escapeHtml(item.ocrText)}</span> (${Math.round(Number(item.ocrConfidence || 0) * 100)}%)<br/>`
+        : "";
       popup.innerHTML = `
         <button class="popup-close" title="닫기">×</button>
-        <strong>${item.name} (${item.lightType || item.type})</strong>
+        <strong>${escapeHtml(isSignboard && item.storeName ? item.storeName : item.name)} (${escapeHtml(item.lightType || item.type)})</strong>
+        ${storeInfo}${ocrInfo}
         빛 공해 분류: <b>${item.pollutionCategory || "미분류"}</b> <small>${item.pollutionCategoryDesc || ""}</small><br/>
         측정값(참고용 추정): <b>${Math.round(measured)} ${lawUnit}</b><br/>
         ROI 밝기 평균/95%: ${Math.round(item.brightness ?? 0)} / ${Math.round(item.brightnessP95 ?? item.brightness ?? 0)}<br/>

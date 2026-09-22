@@ -9,3 +9,5 @@ requests>=2.31.0
 reportlab>=4.0.0
 torch>=2.0.0
 ultralytics==8.3.36
+easyocr==1.7.2
+tifffile==2024.9.20
