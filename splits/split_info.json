@@ -1,0 +1,85 @@
+{
+  "generated_at": "2026-09-29 19:02:20",
+  "dataset_root": "D:\\visual.code\\light_pollution\\data",
+  "layout_style": "split_first",
+  "seed": 42,
+  "strategy": "existing",
+  "class_names": [
+    "light_signboard",
+    "lighting",
+    "streetlight"
+  ],
+  "counts": {
+    "train": 4462,
+    "val": 1161,
+    "test": 579
+  },
+  "notes": [
+    "폴리곤 라벨 490줄을 외접 bbox 로 변환하고, 혼재 파일의 bbox 821줄을 원래 좌표로 보존한 파생 데이터셋(D:\\visual.code\\light_pollution\\derived_data\\dataset_normalized)을 만들어 4개 모델이 모두 이 데이터를 사용합니다.",
+    "데이터셋에 test 폴더가 있어 기존 train/val/test 를 그대로 사용했습니다."
+  ],
+  "ok": true,
+  "label_scan": {
+    "train": {
+      "files": 4462,
+      "polygon_files": 173,
+      "mixed_files": 120,
+      "polygon_lines": 347,
+      "bbox_lines": 22624,
+      "bbox_lines_in_mixed": 574
+    },
+    "val": {
+      "files": 1161,
+      "polygon_files": 49,
+      "mixed_files": 37,
+      "polygon_lines": 107,
+      "bbox_lines": 5527,
+      "bbox_lines_in_mixed": 168
+    },
+    "test": {
+      "files": 579,
+      "polygon_files": 22,
+      "mixed_files": 17,
+      "polygon_lines": 36,
+      "bbox_lines": 3165,
+      "bbox_lines_in_mixed": 79
+    }
+  },
+  "label_normalization": {
+    "out_root": "D:\\visual.code\\light_pollution\\derived_data\\dataset_normalized",
+    "splits": {
+      "train": {
+        "files": 4462,
+        "polygon_lines": 347,
+        "bbox_lines_in_mixed_files": 574,
+        "dropped_lines": 0,
+        "images": "junction"
+      },
+      "val": {
+        "files": 1161,
+        "polygon_lines": 107,
+        "bbox_lines_in_mixed_files": 168,
+        "dropped_lines": 0,
+        "images": "junction"
+      },
+      "test": {
+        "files": 579,
+        "polygon_lines": 36,
+        "bbox_lines_in_mixed_files": 79,
+        "dropped_lines": 0,
+        "images": "junction"
+      }
+    },
+    "images_link": {
+      "train": "junction",
+      "val": "junction",
+      "test": "junction"
+    },
+    "converted_polygon_lines": 490,
+    "recovered_bbox_lines": 821,
+    "dropped_lines": 0,
+    "total_files": 6202
+  },
+  "dataset_used": "D:\\visual.code\\light_pollution\\derived_data\\dataset_normalized",
+  "data_yaml": "D:\\visual.code\\light_pollution\\derived_data\\data_compare.yaml"
+}

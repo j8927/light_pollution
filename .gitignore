@@ -6,3 +6,11 @@ runs/
 __pycache__/
 *.pyc
 models/easyocr/
+
+# 모델 비교 실험에서 생성되는 대용량/머신 종속 산출물
+logs/
+derived_data/
+splits/*.txt
+results/predictions/
+results/comparison_images/
+results/inference/

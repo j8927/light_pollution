@@ -1,0 +1,704 @@
+{
+  "generated_at": "2026-09-29 22:15:57",
+  "split": "test",
+  "num_images": 579,
+  "class_names": [
+    "light_signboard",
+    "lighting",
+    "streetlight"
+  ],
+  "evaluation_settings": {
+    "conf_threshold": 0.25,
+    "map_conf_threshold": 0.001,
+    "iou_threshold": 0.5,
+    "nms_iou": 0.7,
+    "max_detections": 300,
+    "area_criterion": "coco"
+  },
+  "image_size": 640,
+  "device": "cuda:0",
+  "models": {
+    "yolov8": {
+      "row": {
+        "Model": "YOLOv8",
+        "Model_Key": "yolov8",
+        "Framework": "ultralytics",
+        "Status": "OK",
+        "Precision": 0.40319,
+        "Recall": 0.50239,
+        "F1": 0.39079,
+        "mAP50": 0.41472,
+        "mAP50_95": 0.19419,
+        "FPS": 181.85,
+        "Inference_ms": 3.175,
+        "Preprocess_ms": 1.345,
+        "Postprocess_ms": 0.979,
+        "Total_ms": 5.499,
+        "Parameters": 3006233,
+        "GFLOPs": 8.085,
+        "Model_Size_MB": 5.954,
+        "GPU_Memory_MB": 762.95,
+        "Train_GPU_Memory_MB": "",
+        "Training_Time": "0:20:22",
+        "Training_Time_sec": 1222.44,
+        "Batch_Size": 16,
+        "Requested_Batch": 16,
+        "Image_Size": 640,
+        "Epochs": 2,
+        "Seed": 42,
+        "Device": "cpu",
+        "TP": 2064,
+        "FP": 3926,
+        "FN": 1137,
+        "Test_Images": 579,
+        "Small_AP50_95": 0.06731,
+        "Medium_AP50_95": 0.05603,
+        "Large_AP50_95": 0.1366,
+        "Conf_Threshold": 0.25,
+        "IoU_Threshold": 0.5,
+        "Weights": "D:\\visual.code\\light_pollution\\runs\\yolov8\\weights\\best.pt",
+        "Note": ""
+      },
+      "error": null,
+      "metrics": {
+        "map50": 0.41472,
+        "map50_95": 0.19419,
+        "per_class_ap50": [
+          0.63347,
+          0.41979,
+          0.19089
+        ],
+        "per_class_ap50_95": [
+          0.37789,
+          0.1554,
+          0.04929
+        ],
+        "precision": 0.40319,
+        "recall": 0.50239,
+        "f1": 0.39079,
+        "confusion_matrix": [
+          [
+            955,
+            15,
+            0,
+            1119
+          ],
+          [
+            10,
+            1085,
+            29,
+            2726
+          ],
+          [
+            0,
+            2,
+            20,
+            29
+          ],
+          [
+            316,
+            649,
+            120,
+            0
+          ]
+        ],
+        "size_ap": {
+          "small": {
+            "map50": 0.20172159044590485,
+            "map50_95": 0.06731079922577259,
+            "gt_count": 1393
+          },
+          "medium": {
+            "map50": 0.15436617683921391,
+            "map50_95": 0.056032500184608126,
+            "gt_count": 785
+          },
+          "large": {
+            "map50": 0.2235478296978478,
+            "map50_95": 0.13660289218830007,
+            "gt_count": 1023
+          }
+        },
+        "torchmetrics_cross_check": null
+      },
+      "speed": {
+        "images_used": 100,
+        "repeat": 3,
+        "warmup": 10,
+        "total_inferences": 300,
+        "preprocess_ms": 1.345,
+        "inference_ms": 3.175,
+        "postprocess_ms": 0.979,
+        "total_ms": 5.499,
+        "median_total_ms": 5.002,
+        "fps": 181.85,
+        "image_load_ms_per_image": 1.0,
+        "device": "cuda:0",
+        "framework": "ultralytics",
+        "framework_note": "Ultralytics 내부 speed 계측 (preprocess/inference/postprocess)",
+        "inference_gpu_memory_mb": 762.95,
+        "error": null
+      },
+      "model_info": {
+        "parameters": 3006233,
+        "model_size_mb": 5.954,
+        "gflops": 8.085,
+        "gflops_source": "thop.profile (MACs x 2)"
+      },
+      "training_meta": {
+        "model_key": "yolov8",
+        "display_name": "YOLOv8",
+        "framework": "ultralytics",
+        "requested_weights": "yolov8n.pt",
+        "actual_weights": "yolov8n.pt",
+        "weights_changed_reason": "",
+        "dataset_root": "D:\\visual.code\\light_pollution\\data",
+        "data_yaml": "D:\\visual.code\\light_pollution\\derived_data\\data_compare.yaml",
+        "epochs": 2,
+        "image_size": 640,
+        "requested_batch": 16,
+        "actual_batch": 16,
+        "seed": 42,
+        "device": "cpu",
+        "device_detail": "cpu",
+        "pretrained": true,
+        "workers": 0,
+        "started_at": "2026-09-29 19:36:57",
+        "finished_at": "2026-09-29 19:57:20",
+        "training_time_sec": 1222.44,
+        "train_gpu_memory_mb": null,
+        "success": true,
+        "error": null,
+        "oom_retries": [],
+        "notes": [],
+        "run_dir": "D:\\visual.code\\light_pollution\\runs\\yolov8",
+        "gpu_name": null,
+        "vram_gb": null,
+        "best_weights": "D:\\visual.code\\light_pollution\\runs\\yolov8\\weights\\best.pt"
+      }
+    },
+    "yolo11": {
+      "row": {
+        "Model": "YOLO11",
+        "Model_Key": "yolo11",
+        "Framework": "ultralytics",
+        "Status": "OK",
+        "Precision": 0.41335,
+        "Recall": 0.47164,
+        "F1": 0.36059,
+        "mAP50": 0.39391,
+        "mAP50_95": 0.19449,
+        "FPS": 164.1,
+        "Inference_ms": 3.901,
+        "Preprocess_ms": 1.276,
+        "Postprocess_ms": 0.916,
+        "Total_ms": 6.094,
+        "Parameters": 2582737,
+        "GFLOPs": 6.313,
+        "Model_Size_MB": 5.213,
+        "GPU_Memory_MB": 778.29,
+        "Train_GPU_Memory_MB": "",
+        "Training_Time": "0:23:30",
+        "Training_Time_sec": 1410.16,
+        "Batch_Size": 16,
+        "Requested_Batch": 16,
+        "Image_Size": 640,
+        "Epochs": 2,
+        "Seed": 42,
+        "Device": "cpu",
+        "TP": 2017,
+        "FP": 3312,
+        "FN": 1184,
+        "Test_Images": 579,
+        "Small_AP50_95": 0.06612,
+        "Medium_AP50_95": 0.04537,
+        "Large_AP50_95": 0.14297,
+        "Conf_Threshold": 0.25,
+        "IoU_Threshold": 0.5,
+        "Weights": "D:\\visual.code\\light_pollution\\runs\\yolo11\\weights\\best.pt",
+        "Note": ""
+      },
+      "error": null,
+      "metrics": {
+        "map50": 0.39391,
+        "map50_95": 0.19449,
+        "per_class_ap50": [
+          0.64237,
+          0.41499,
+          0.12436
+        ],
+        "per_class_ap50_95": [
+          0.38911,
+          0.15992,
+          0.03445
+        ],
+        "precision": 0.41335,
+        "recall": 0.47164,
+        "f1": 0.36059,
+        "confusion_matrix": [
+          [
+            1001,
+            23,
+            0,
+            1360
+          ],
+          [
+            9,
+            1007,
+            29,
+            1879
+          ],
+          [
+            0,
+            0,
+            10,
+            11
+          ],
+          [
+            271,
+            721,
+            130,
+            0
+          ]
+        ],
+        "size_ap": {
+          "small": {
+            "map50": 0.18518053219217032,
+            "map50_95": 0.06611804743093723,
+            "gt_count": 1393
+          },
+          "medium": {
+            "map50": 0.12081790855899277,
+            "map50_95": 0.045367256531077794,
+            "gt_count": 785
+          },
+          "large": {
+            "map50": 0.22924035711785096,
+            "map50_95": 0.14296958204022187,
+            "gt_count": 1023
+          }
+        },
+        "torchmetrics_cross_check": null
+      },
+      "speed": {
+        "images_used": 100,
+        "repeat": 3,
+        "warmup": 10,
+        "total_inferences": 300,
+        "preprocess_ms": 1.276,
+        "inference_ms": 3.901,
+        "postprocess_ms": 0.916,
+        "total_ms": 6.094,
+        "median_total_ms": 5.999,
+        "fps": 164.1,
+        "image_load_ms_per_image": 0.962,
+        "device": "cuda:0",
+        "framework": "ultralytics",
+        "framework_note": "Ultralytics 내부 speed 계측 (preprocess/inference/postprocess)",
+        "inference_gpu_memory_mb": 778.29,
+        "error": null
+      },
+      "model_info": {
+        "parameters": 2582737,
+        "model_size_mb": 5.213,
+        "gflops": 6.313,
+        "gflops_source": "thop.profile (MACs x 2)"
+      },
+      "training_meta": {
+        "model_key": "yolo11",
+        "display_name": "YOLO11",
+        "framework": "ultralytics",
+        "requested_weights": "yolo11n.pt",
+        "actual_weights": "yolo11n.pt",
+        "weights_changed_reason": "",
+        "dataset_root": "D:\\visual.code\\light_pollution\\data",
+        "data_yaml": "D:\\visual.code\\light_pollution\\derived_data\\data_compare.yaml",
+        "epochs": 2,
+        "image_size": 640,
+        "requested_batch": 16,
+        "actual_batch": 16,
+        "seed": 42,
+        "device": "cpu",
+        "device_detail": "cpu",
+        "pretrained": true,
+        "workers": 0,
+        "started_at": "2026-09-29 19:57:20",
+        "finished_at": "2026-09-29 20:20:50",
+        "training_time_sec": 1410.16,
+        "train_gpu_memory_mb": null,
+        "success": true,
+        "error": null,
+        "oom_retries": [],
+        "notes": [],
+        "run_dir": "D:\\visual.code\\light_pollution\\runs\\yolo11",
+        "gpu_name": null,
+        "vram_gb": null,
+        "best_weights": "D:\\visual.code\\light_pollution\\runs\\yolo11\\weights\\best.pt"
+      }
+    },
+    "rtdetr": {
+      "row": {
+        "Model": "RT-DETR",
+        "Model_Key": "rtdetr",
+        "Framework": "ultralytics",
+        "Status": "OK",
+        "Precision": 0.31691,
+        "Recall": 0.60517,
+        "F1": 0.40991,
+        "mAP50": 0.47081,
+        "mAP50_95": 0.24202,
+        "FPS": 38.1,
+        "Inference_ms": 23.84,
+        "Preprocess_ms": 1.591,
+        "Postprocess_ms": 0.812,
+        "Total_ms": 26.244,
+        "Parameters": 31989905,
+        "GFLOPs": 105.342,
+        "Model_Size_MB": 63.076,
+        "GPU_Memory_MB": 992.3,
+        "Train_GPU_Memory_MB": 2198.29,
+        "Training_Time": "0:16:25",
+        "Training_Time_sec": 984.64,
+        "Batch_Size": 2,
+        "Requested_Batch": 2,
+        "Image_Size": 640,
+        "Epochs": 2,
+        "Seed": 42,
+        "Device": "cuda:0",
+        "TP": 2311,
+        "FP": 4395,
+        "FN": 890,
+        "Test_Images": 579,
+        "Small_AP50_95": 0.08203,
+        "Medium_AP50_95": 0.07263,
+        "Large_AP50_95": 0.1796,
+        "Conf_Threshold": 0.25,
+        "IoU_Threshold": 0.5,
+        "Weights": "D:\\visual.code\\light_pollution\\runs\\rtdetr\\weights\\best.pt",
+        "Note": ""
+      },
+      "error": null,
+      "metrics": {
+        "map50": 0.47081,
+        "map50_95": 0.24202,
+        "per_class_ap50": [
+          0.72264,
+          0.50597,
+          0.18382
+        ],
+        "per_class_ap50_95": [
+          0.47843,
+          0.20586,
+          0.04176
+        ],
+        "precision": 0.31691,
+        "recall": 0.60517,
+        "f1": 0.40991,
+        "confusion_matrix": [
+          [
+            1090,
+            41,
+            3,
+            1763
+          ],
+          [
+            10,
+            1171,
+            31,
+            2397
+          ],
+          [
+            0,
+            11,
+            50,
+            139
+          ],
+          [
+            181,
+            528,
+            85,
+            0
+          ]
+        ],
+        "size_ap": {
+          "small": {
+            "map50": 0.23466271852663637,
+            "map50_95": 0.08202935158057278,
+            "gt_count": 1393
+          },
+          "medium": {
+            "map50": 0.19241213524736922,
+            "map50_95": 0.0726294049798354,
+            "gt_count": 785
+          },
+          "large": {
+            "map50": 0.26337070419199277,
+            "map50_95": 0.17960499107893818,
+            "gt_count": 1023
+          }
+        },
+        "torchmetrics_cross_check": null
+      },
+      "speed": {
+        "images_used": 100,
+        "repeat": 3,
+        "warmup": 10,
+        "total_inferences": 300,
+        "preprocess_ms": 1.591,
+        "inference_ms": 23.84,
+        "postprocess_ms": 0.812,
+        "total_ms": 26.244,
+        "median_total_ms": 24.514,
+        "fps": 38.1,
+        "image_load_ms_per_image": 1.011,
+        "device": "cuda:0",
+        "framework": "ultralytics",
+        "framework_note": "Ultralytics 내부 speed 계측 (preprocess/inference/postprocess)",
+        "inference_gpu_memory_mb": 992.3,
+        "error": null
+      },
+      "model_info": {
+        "parameters": 31989905,
+        "model_size_mb": 63.076,
+        "gflops": 105.342,
+        "gflops_source": "thop.profile (MACs x 2)"
+      },
+      "training_meta": {
+        "model_key": "rtdetr",
+        "display_name": "RT-DETR",
+        "framework": "ultralytics",
+        "requested_weights": "rtdetr-l.pt",
+        "actual_weights": "rtdetr-l.pt",
+        "weights_changed_reason": "",
+        "dataset_root": "D:\\visual.code\\light_pollution\\data",
+        "data_yaml": "D:\\visual.code\\light_pollution\\derived_data\\data_compare.yaml",
+        "epochs": 2,
+        "image_size": 640,
+        "requested_batch": 2,
+        "actual_batch": 2,
+        "seed": 42,
+        "device": "cuda",
+        "device_detail": "cuda:0",
+        "pretrained": true,
+        "workers": 0,
+        "started_at": "2026-09-29 21:33:29",
+        "finished_at": "2026-09-29 21:49:54",
+        "training_time_sec": 984.64,
+        "train_gpu_memory_mb": 2198.29,
+        "success": true,
+        "error": null,
+        "oom_retries": [],
+        "notes": [],
+        "run_dir": "D:\\visual.code\\light_pollution\\runs\\rtdetr",
+        "gpu_name": "NVIDIA GeForce RTX 5060",
+        "vram_gb": 7.93,
+        "best_weights": "D:\\visual.code\\light_pollution\\runs\\rtdetr\\weights\\best.pt"
+      }
+    },
+    "faster_rcnn": {
+      "row": {
+        "Model": "Faster R-CNN",
+        "Model_Key": "faster_rcnn",
+        "Framework": "torchvision",
+        "Status": "OK",
+        "Precision": 0.27705,
+        "Recall": 0.70767,
+        "F1": 0.39771,
+        "mAP50": 0.53201,
+        "mAP50_95": 0.27566,
+        "FPS": 17.71,
+        "Inference_ms": 53.044,
+        "Preprocess_ms": 3.123,
+        "Postprocess_ms": 0.29,
+        "Total_ms": 56.458,
+        "Parameters": 43266403,
+        "GFLOPs": "",
+        "Model_Size_MB": 165.389,
+        "GPU_Memory_MB": 664.89,
+        "Train_GPU_Memory_MB": 2198.29,
+        "Training_Time": "0:14:45",
+        "Training_Time_sec": 885.14,
+        "Batch_Size": 2,
+        "Requested_Batch": 2,
+        "Image_Size": 640,
+        "Epochs": 2,
+        "Seed": 42,
+        "Device": "cuda:0",
+        "TP": 2524,
+        "FP": 5982,
+        "FN": 677,
+        "Test_Images": 579,
+        "Small_AP50_95": 0.08439,
+        "Medium_AP50_95": 0.09757,
+        "Large_AP50_95": 0.20385,
+        "Conf_Threshold": 0.25,
+        "IoU_Threshold": 0.5,
+        "Weights": "D:\\visual.code\\light_pollution\\runs\\faster_rcnn\\weights\\best.pt",
+        "Note": "GFLOPs 측정 안 함: torchvision Faster R-CNN 은 list[Tensor] 입력과 내부 GeneralizedRCNNTransform 때문에 thop 표준 프로파일링이 적용되지 않음"
+      },
+      "error": null,
+      "metrics": {
+        "map50": 0.53201,
+        "map50_95": 0.27566,
+        "per_class_ap50": [
+          0.76863,
+          0.54096,
+          0.28643
+        ],
+        "per_class_ap50_95": [
+          0.52135,
+          0.2231,
+          0.08252
+        ],
+        "precision": 0.27705,
+        "recall": 0.70767,
+        "f1": 0.39771,
+        "confusion_matrix": [
+          [
+            1124,
+            26,
+            0,
+            2213
+          ],
+          [
+            27,
+            1292,
+            36,
+            3410
+          ],
+          [
+            0,
+            16,
+            71,
+            291
+          ],
+          [
+            130,
+            417,
+            62,
+            0
+          ]
+        ],
+        "size_ap": {
+          "small": {
+            "map50": 0.24377977581572652,
+            "map50_95": 0.08439396315949783,
+            "gt_count": 1393
+          },
+          "medium": {
+            "map50": 0.24736327879721184,
+            "map50_95": 0.09756516636902865,
+            "gt_count": 785
+          },
+          "large": {
+            "map50": 0.29737698238713867,
+            "map50_95": 0.20384937904114106,
+            "gt_count": 1023
+          }
+        },
+        "torchmetrics_cross_check": null
+      },
+      "speed": {
+        "images_used": 100,
+        "repeat": 3,
+        "warmup": 10,
+        "total_inferences": 300,
+        "preprocess_ms": 3.123,
+        "inference_ms": 53.044,
+        "postprocess_ms": 0.29,
+        "total_ms": 56.458,
+        "median_total_ms": 54.322,
+        "fps": 17.71,
+        "image_load_ms_per_image": 1.61,
+        "device": "cuda:0",
+        "framework": "torchvision",
+        "framework_note": "직접 계측 — NMS/box decoding 은 forward(inference) 구간에 포함됨",
+        "inference_gpu_memory_mb": 664.89,
+        "error": null
+      },
+      "model_info": {
+        "parameters": 43266403,
+        "model_size_mb": 165.389,
+        "gflops": null,
+        "gflops_source": "측정 안 함: torchvision Faster R-CNN 은 list[Tensor] 입력과 내부 GeneralizedRCNNTransform 때문에 thop 표준 프로파일링이 적용되지 않음"
+      },
+      "training_meta": {
+        "model_key": "faster_rcnn",
+        "display_name": "Faster R-CNN",
+        "framework": "torchvision",
+        "requested_weights": "fasterrcnn_resnet50_fpn_v2",
+        "actual_weights": "fasterrcnn_resnet50_fpn_v2 (COCO pretrained)",
+        "weights_changed_reason": "",
+        "dataset_root": "D:\\visual.code\\light_pollution\\data",
+        "data_yaml": "D:\\visual.code\\light_pollution\\derived_data\\data_compare.yaml",
+        "epochs": 2,
+        "image_size": 640,
+        "requested_batch": 2,
+        "actual_batch": 2,
+        "seed": 42,
+        "device": "cuda",
+        "device_detail": "cuda:0",
+        "pretrained": true,
+        "workers": 0,
+        "amp": true,
+        "optimizer": "SGD",
+        "lr": 0.005,
+        "lr_scheduler": "cosine",
+        "augmentation": "horizontal_flip=0.5 (YOLO 고유 증강 미적용)",
+        "started_at": "2026-09-29 21:49:54",
+        "finished_at": "2026-09-29 22:04:39",
+        "training_time_sec": 885.14,
+        "train_gpu_memory_mb": 2198.29,
+        "success": true,
+        "error": null,
+        "oom_retries": [],
+        "notes": [],
+        "run_dir": "D:\\visual.code\\light_pollution\\runs\\faster_rcnn",
+        "gpu_name": "NVIDIA GeForce RTX 5060",
+        "vram_gb": 7.93,
+        "best_epoch": 2,
+        "best_score": 0.25644,
+        "history": [
+          {
+            "epoch": 1,
+            "lr": 0.00293391,
+            "train_loss": 0.51032,
+            "loss_classifier": 0.19086,
+            "loss_box_reg": 0.20677,
+            "loss_objectness": 0.0707,
+            "loss_rpn_box_reg": 0.042,
+            "val_loss": 0.42595,
+            "precision": 0.3382,
+            "recall": 0.68156,
+            "mAP50": 0.48417,
+            "mAP50-95": 0.24591,
+            "epoch_time_sec": 439.52
+          },
+          {
+            "epoch": 2,
+            "lr": 0.0,
+            "train_loss": 0.40039,
+            "loss_classifier": 0.14689,
+            "loss_box_reg": 0.18433,
+            "loss_objectness": 0.0357,
+            "loss_rpn_box_reg": 0.03348,
+            "val_loss": 0.40305,
+            "precision": 0.32604,
+            "recall": 0.67856,
+            "mAP50": 0.49734,
+            "mAP50-95": 0.25644,
+            "epoch_time_sec": 444.67
+          }
+        ],
+        "results_csv": "D:\\visual.code\\light_pollution\\runs\\faster_rcnn\\results.csv",
+        "best_weights": "D:\\visual.code\\light_pollution\\runs\\faster_rcnn\\weights\\best.pt",
+        "num_classes": 3,
+        "class_names": [
+          "light_signboard",
+          "lighting",
+          "streetlight"
+        ]
+      }
+    }
+  }
+}

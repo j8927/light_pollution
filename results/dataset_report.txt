@@ -1,0 +1,103 @@
+==============================================================================
+빛공해 YOLO 데이터셋 검사 리포트
+==============================================================================
+생성 시각      : 2026-09-29 21:33:23
+데이터셋 경로  : D:\visual.code\light_pollution\data
+디렉터리 구조  : split_first
+data.yaml      : D:\visual.code\light_pollution\data\data.yaml
+클래스 수      : 3
+클래스 이름    : light_signboard, lighting, streetlight
+
+------------------------------------------------------------------------------
+Split 별 요약
+------------------------------------------------------------------------------
+split      images  labeled      배경      라벨없음    boxes      고아라벨
+train        4462     4323     139         0    22971         0
+val          1161     1125      36         0     5634         0
+test          579      570       9         0     3201         0
+합계           6202     6018     184         0    31806         0
+
+------------------------------------------------------------------------------
+클래스별 bbox 개수
+------------------------------------------------------------------------------
+  light_signboard    12665 개   (전체의 39.82%, 최다 클래스 대비  73.0%)
+  lighting        17351 개   (전체의 54.55%, 최다 클래스 대비 100.0%)
+  streetlight      1790 개   (전체의  5.63%, 최다 클래스 대비  10.3%)
+  최다/최소 클래스 비율 : 9.69 : 1
+  [경고] 클래스 불균형이 큽니다. 소수 클래스의 Recall 이 낮게 나올 수 있습니다.
+
+------------------------------------------------------------------------------
+split 별 클래스 분포
+------------------------------------------------------------------------------
+split   light_signboard    lighting streetlight
+train           9048       12505        1418
+val             2336        3095         203
+test            1281        1751         169
+
+------------------------------------------------------------------------------
+객체 크기 분포 (COCO 기준: small < 32^2 px, medium < 96^2 px)
+------------------------------------------------------------------------------
+  small       13387 개  (42.09%)
+  medium       8074 개  (25.39%)
+  large       10345 개  (32.53%)
+  unknown         0 개  ( 0.00%)
+  * 작은 광원 탐지 성능 비교(results/object_size_metrics.csv)의 기준과 동일합니다.
+
+------------------------------------------------------------------------------
+오류 / 경고 요약
+------------------------------------------------------------------------------
+  polygon_label               490 건
+
+  상세 목록 (최대 50건, 전체는 dataset_report.csv 참고)
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_182643_jpg.rf.6b4cc40cd03945c91b5fdb974639dad2.txt:2 — 폴리곤 라벨(10개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_182849_jpg.rf.3fad7c6f20c24099237d9112f0b0f626.txt:1 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_182906_jpg.rf.e26b404b899da240b4eaaab65235ad4e.txt:1 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_182906_jpg.rf.e26b404b899da240b4eaaab65235ad4e.txt:2 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183014_jpg.rf.78e694e987b00a397d2e07e8bf4ef404.txt:2 — 폴리곤 라벨(7개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183034_jpg.rf.2faf6ebe5314ed6f7e8b62cc2200043d.txt:1 — 폴리곤 라벨(7개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183349_jpg.rf.37652663e31ba11d828b0aa24fcecd94.txt:1 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183349_jpg.rf.37652663e31ba11d828b0aa24fcecd94.txt:2 — 폴리곤 라벨(6개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183349_jpg.rf.37652663e31ba11d828b0aa24fcecd94.txt:3 — 폴리곤 라벨(9개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183349_jpg.rf.37652663e31ba11d828b0aa24fcecd94.txt:4 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183708_jpg.rf.8091df5b943f0347709f1ea002579909.txt:1 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183822_jpg.rf.d01ab199074c8503e7e3595e7178120e.txt:1 — 폴리곤 라벨(6개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183822_jpg.rf.d01ab199074c8503e7e3595e7178120e.txt:2 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183822_jpg.rf.d01ab199074c8503e7e3595e7178120e.txt:3 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183822_jpg.rf.d01ab199074c8503e7e3595e7178120e.txt:4 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:1 — 폴리곤 라벨(6개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:2 — 폴리곤 라벨(8개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:3 — 폴리곤 라벨(14개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:4 — 폴리곤 라벨(10개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:5 — 폴리곤 라벨(6개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:6 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:7 — 폴리곤 라벨(15개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:8 — 폴리곤 라벨(7개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:9 — 폴리곤 라벨(6개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:10 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:11 — 폴리곤 라벨(6개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:12 — 폴리곤 라벨(6개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:13 — 폴리곤 라벨(7개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:14 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:15 — 폴리곤 라벨(7개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:16 — 폴리곤 라벨(6개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:17 — 폴리곤 라벨(7개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:18 — 폴리곤 라벨(23개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:19 — 폴리곤 라벨(8개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:20 — 폴리곤 라벨(8개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:21 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:22 — 폴리곤 라벨(10개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:23 — 폴리곤 라벨(6개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:24 — 폴리곤 라벨(7개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:25 — 폴리곤 라벨(7개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:26 — 폴리곤 라벨(9개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:27 — 폴리곤 라벨(8개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:28 — 폴리곤 라벨(10개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:29 — 폴리곤 라벨(12개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183825_jpg.rf.9f50f9ee8124dc406874bf2dbbd4e846.txt:30 — 폴리곤 라벨(20개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183832_jpg.rf.2fd254857ffc1c99aa1a91293bb298c9.txt:1 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183832_jpg.rf.2fd254857ffc1c99aa1a91293bb298c9.txt:6 — 폴리곤 라벨(5개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183832_jpg.rf.2fd254857ffc1c99aa1a91293bb298c9.txt:8 — 폴리곤 라벨(6개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183845_jpg.rf.80bc8eca596da337ff862f7f34eaae27.txt:2 — 폴리곤 라벨(7개 점)을 외접 bbox 로 변환했습니다.
+   - [polygon_label] D:\visual.code\light_pollution\data\train\labels\20251212_183906_jpg.rf.07c9dcc44d87df93dae19af82e76b0c0.txt:1 — 폴리곤 라벨(8개 점)을 외접 bbox 로 변환했습니다.
+
+원본 데이터셋은 검사만 수행했으며 어떤 파일도 수정하지 않았습니다.

@@ -62,6 +62,8 @@ GitHub, Discord, VS Code, Roboflow, Weights & Biases
 
 ⦁ YOLOv8 아키텍처를 야간 특화 데이터로 전이 학습하여 미세 광원 탐지 성능을 극대화한다.
 
+⦁ 동일한 데이터셋으로 YOLOv8·YOLO11·RT-DETR·Faster R-CNN을 학습·비교하여 빛 공해 탐지에 적합한 모델을 실측 수치로 확인한다. (→ [5. 객체탐지 모델 비교 실험](#5-객체탐지-모델-비교-실험-yolov8--yolo11--rt-detr--faster-r-cnn))
+
 ⦁ 탐지된 광원 영역의 RGB 값을 휘도 값으로 변환하는 수식을 구현하고 법적 기준치와 대조한다.
 
 ### 3. 웹 서비스 구현
@@ -191,7 +193,233 @@ python backend.py
 - 예시 이미지 또는 업로드 후 분석 페이지 이동
 - 결과 페이지 정상 표시
 
-# 5. 참고문헌
+# 5. 객체탐지 모델 비교 실험 (YOLOv8 / YOLO11 / RT-DETR / Faster R-CNN)
+
+기존 YOLOv8 학습 데이터셋을 그대로 사용하여 4개 객체탐지 모델을 **같은 조건으로 학습**하고,
+정확도·속도·모델 크기·GPU 사용량을 **실제 측정값**으로 비교하는 실험 환경입니다.
+
+기존 학습 스크립트(`train_model.py`)와 웹 서비스(`backend.py`), 기존 데이터셋과 `models/light_pollution_best.pt`는
+그대로 유지되며, 비교 실험 코드만 추가되어 있습니다.
+
+기술적인 상세 설명(평가 기준, split 방식, Faster R-CNN의 라벨 변환 등)은
+[Information.md — 10. 객체탐지 모델 비교 실험](./Information.md#10-객체탐지-모델-비교-실험)을 참조하세요.
+
+## 1) 비교 대상 모델
+
+| 모델 | 기본 weight | Framework |
+|---|---|---|
+| YOLOv8 | `yolov8n.pt` | Ultralytics |
+| YOLO11 | `yolo11n.pt` | Ultralytics |
+| RT-DETR | `rtdetr-l.pt` | Ultralytics |
+| Faster R-CNN | `fasterrcnn_resnet50_fpn_v2` (COCO pretrained) | torchvision |
+
+모델 규모가 서로 다르므로 정확도만 보지 않고 파라미터 수·모델 크기·GFLOPs·GPU 메모리·FPS를 함께 기록합니다.
+
+## 2) 개발 환경
+
+- Windows 10 + PowerShell + Visual Studio Code
+- Python 가상환경 `.venv` (Python 3.11)
+- 학습·평가는 NVIDIA GPU(CUDA)를 사용합니다. `config/experiment.yaml`의 `common.device: cuda`, `common.require_cuda: true`가 기본값이며, CUDA를 쓸 수 없으면 CPU로 조용히 넘어가지 않고 **학습을 중단하고 원인을 출력**합니다. CPU로 강행하려면 `--allow-cpu`를 사용합니다.
+
+패키지 설치(로컬 전체):
+
+```powershell
+pip install -r requirements-full.txt
+```
+
+## 3) 환경 / CUDA 확인
+
+```powershell
+python tools/check_environment.py
+```
+
+Python·PyTorch·torchvision·Ultralytics 버전, CUDA 사용 가능 여부, GPU 이름과 VRAM을 출력합니다.
+NVIDIA GPU가 있는데 CUDA를 쓸 수 없으면(예: CPU 전용 PyTorch가 설치된 경우) 경고와 함께 필요한 설치 명령을 안내합니다.
+이 스크립트는 패키지를 자동으로 설치하거나 제거하지 않습니다.
+
+## 4) 공통 설정 파일
+
+모든 실험 조건은 `config/experiment.yaml` 한 곳에서 관리합니다.
+
+```yaml
+dataset:
+  root: data/images        # 기존 YOLO 데이터셋 (읽기 전용)
+common:
+  epochs: 100
+  image_size: 640
+  seed: 42
+  device: auto
+  pretrained: true
+models:
+  yolov8:      { weights: yolov8n.pt,  batch: 16, run_dir: runs/yolov8 }
+  yolo11:      { weights: yolo11n.pt,  batch: 16, run_dir: runs/yolo11 }
+  rtdetr:      { weights: rtdetr-l.pt, batch: 4,  run_dir: runs/rtdetr }
+  faster_rcnn: { weights: fasterrcnn_resnet50_fpn_v2, batch: 4, run_dir: runs/faster_rcnn }
+```
+
+## 5) Dataset 위치와 검사
+
+데이터셋은 기존 구조를 그대로 사용합니다. (Roboflow `light_pollution` v8 export)
+
+```text
+data/
+├─ train/images/   train/labels/     4,462장
+├─ valid/images/   valid/labels/     1,161장
+├─ test/images/    test/labels/        579장
+└─ data.yaml       (클래스 3개: light_signboard / lighting / streetlight)
+```
+
+경로는 `config/experiment.yaml`의 `dataset.root`로 지정합니다(현재 값 `data`).
+
+검사 실행:
+
+```powershell
+python tools/validate_dataset.py
+```
+
+이미지 수, bbox 수, 클래스별 분포, 이미지-라벨 1:1 대응, 잘못된 class id, bbox 좌표 오류,
+라벨 없는 이미지, 이미지 없는 라벨, 클래스 불균형을 확인하고 결과를 저장합니다.
+
+```text
+results/dataset_report.txt
+results/dataset_report.csv
+```
+
+원본 데이터셋은 검사만 하며 수정하지 않습니다.
+
+## 6) 공통 Dataset split
+
+4개 모델이 **정확히 같은 train / val / test 이미지**를 쓰도록 목록 파일을 생성합니다.
+원본 이미지를 복사하거나 이동하지 않습니다.
+
+```powershell
+python tools/prepare_splits.py
+```
+
+```text
+splits/train.txt   splits/val.txt   splits/test.txt
+splits/split_info.json             (어떤 방식으로 나눴는지 기록)
+derived_data/data_compare.yaml     (4개 모델 공용 data.yaml — 원본 data.yaml은 수정하지 않음)
+```
+
+`test` 폴더가 이미 있으면 기존 split을 그대로 사용하고, 없으면 기존 `val`을 seed 42로 val/test로 나눕니다
+(`train`은 손대지 않음). 이미 만들어진 split이 있으면 그대로 재사용하며, 다시 만들려면 `--force`를 사용합니다.
+
+현재 데이터셋에는 YOLO bbox 라벨과 폴리곤(세그멘테이션) 라벨이 섞여 있습니다. Ultralytics는 파일 안에
+폴리곤 라인이 하나라도 있으면 그 파일 전체를 폴리곤으로 간주해 정상 bbox까지 잘못 읽으므로,
+이 스크립트가 라벨을 `derived_data/dataset_normalized/`에 bbox로 정규화한 뒤 4개 모델이 모두
+그 데이터를 쓰도록 연결합니다(이미지는 원본 폴더로의 junction, 복사 아님). **원본 `data/`는 수정하지 않습니다.**
+
+## 7) 모델별 학습
+
+```powershell
+python training/train_yolov8.py
+python training/train_yolo11.py
+python training/train_rtdetr.py
+python training/train_faster_rcnn.py
+```
+
+주요 옵션(4개 공통): `--epochs`, `--batch`, `--imgsz`, `--device`, `--overwrite`, `--allow-cpu`, `--config`
+
+- 이미 학습된 weight가 있으면 **기본적으로 학습을 건너뜁니다.** 다시 학습하려면 `--overwrite`를 붙입니다.
+- CUDA Out Of Memory가 발생하면 batch를 절반씩 낮춰 재시도하고, 실제 사용된 값을 결과에 기록합니다.
+
+학습 결과 위치:
+
+```text
+runs/yolov8/   runs/yolo11/   runs/rtdetr/   runs/faster_rcnn/
+  weights/best.pt, weights/last.pt
+  results.csv             (epoch별 지표)
+  training_meta.json      (실제 batch, 학습 시간, device, 성공 여부, 오류 메시지)
+```
+
+## 8) 전체 일괄 실행
+
+```powershell
+python run_all.py
+```
+
+환경 검사 → 데이터셋 검사 → split 확인 → 4개 모델 학습 → 동일 test dataset 평가 →
+비교 CSV → 그래프 → 예측/비교 이미지 → 최종 요약 순으로 진행합니다.
+한 모델이 실패해도 나머지는 계속 진행되며, 마지막에 `[SUCCESS] / [FAILED]`로 정리해 보여줍니다.
+
+평가만 실행(기존 weight 재사용):
+
+```powershell
+python run_all.py --evaluate-only
+```
+
+특정 모델만 실행:
+
+```powershell
+python run_all.py --model yolov8
+python run_all.py --model yolo11
+python run_all.py --model rtdetr
+python run_all.py --model faster_rcnn
+```
+
+그 밖의 옵션: `--overwrite`, `--epochs`, `--device`, `--allow-cpu`, `--no-speed`, `--skip-graphs`, `--skip-predictions`, `--num-predictions`, `--val-map-interval`, `--force-splits`
+
+본 학습 전에 2 epoch로 전체 흐름을 먼저 확인할 수 있습니다(설정 파일을 고치지 않아도 됩니다).
+
+```powershell
+python run_all.py --epochs 2
+python run_all.py --overwrite          # 확인 후 100 epoch 본 학습
+```
+
+## 9) 평가 · 결과 파일
+
+평가만 따로 실행할 수도 있습니다.
+
+```powershell
+python evaluation/evaluate_models.py
+python evaluation/benchmark_speed.py
+python evaluation/make_graphs.py
+python evaluation/make_predictions.py
+```
+
+결과 위치:
+
+```text
+results/model_comparison.csv          4개 모델 통합 비교표
+results/<model>_class_metrics.csv     클래스별 Precision / Recall / F1 / AP50 / AP50-95
+results/object_size_metrics.csv       작은 광원(Small) / Medium / Large AP
+results/evaluation_summary.json       평가 원본 수치
+results/graphs/                       지표별 비교 그래프
+results/training_curves/              모델별 학습 곡선
+results/confusion_matrix/             모델별 혼동행렬
+results/predictions/                  original / ground_truth / 모델별 예측 이미지
+results/comparison_images/            정답 + 4개 모델 결과를 한 장에 비교
+logs/                                 모델별 로그
+```
+
+Precision·Recall·F1·mAP@0.5·mAP@0.5:0.95·FPS·추론 시간·파라미터 수·모델 크기·GPU 메모리·학습 시간을
+**모든 모델에 동일한 임계값과 동일한 계산 코드**로 산출합니다. 측정하지 못한 값은 임의로 채우지 않고
+빈칸으로 두며 사유를 로그와 CSV의 `Note` 열에 남깁니다.
+
+## 10) 단일 이미지 추론
+
+```powershell
+python inference.py --model yolov8 --image test.jpg
+python inference.py --model yolo11 --image test.jpg
+python inference.py --model rtdetr --image test.jpg
+python inference.py --model faster_rcnn --image test.jpg
+```
+
+검출된 클래스, confidence, bbox 좌표, 추론 시간을 출력하고 bbox가 그려진 결과 이미지를
+`results/inference/`에 저장합니다.
+
+## 11) 향후 영상 / 카메라 적용
+
+학습 코드(`training/`)와 추론 코드(`inference.py`)가 분리되어 있어, 같은 진입점으로
+동영상과 카메라 입력도 처리할 수 있습니다.
+
+```powershell
+python inference.py --model yolov8 --video sample.mp4
+python inference.py --model yolov8 --webcam 0
+```
+
+# 6. 참고문헌
 
 인공조명에 의한 빛공해 방지법
 https://www.law.go.kr/법령/인공조명에의한빛공해방지법

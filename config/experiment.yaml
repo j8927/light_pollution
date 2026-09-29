@@ -1,0 +1,116 @@
+# =====================================================================
+# 빛공해 객체탐지 모델 비교 실험 공통 설정
+#  - YOLOv8 / YOLO11 / RT-DETR / Faster R-CNN 을 동일 데이터로 학습·평가
+#  - 모든 스크립트(training/, evaluation/, tools/, run_all.py)가 이 파일을 참조
+#  - 기존 backend.py / train_model.py 의 동작에는 영향을 주지 않는다
+# =====================================================================
+
+project_name: light_pollution_model_comparison
+
+dataset:
+  # 기존 YOLOv8 데이터셋 루트 (원본 — 읽기 전용으로만 사용)
+  # Roboflow light_pollution v8 export: data/train, data/valid, data/test
+  root: data
+  # null 이면 root 아래 data.yaml / light_pollution.yaml 을 자동 탐색
+  data_yaml: null
+  # null 이면 data.yaml 의 names 를 사용. 자동 탐색 실패 시 아래 기본값 사용
+  # data/data.yaml 의 실제 클래스명: light_signboard(간판) / lighting(조명) / streetlight(가로등)
+  fallback_names: ["light_signboard", "lighting", "streetlight"]
+
+splits:
+  dir: splits
+  seed: 42
+  # existing      : dataset 에 이미 test 폴더가 있으면 그대로 사용
+  # split_val     : test 가 없을 때 기존 val 을 seed 42 로 val/test 로 분할 (train 은 그대로 유지)
+  # use_val_as_test: val 을 test 로 그대로 재사용 (val == test, 성능이 과대평가되므로 기록됨)
+  # resplit_all   : train+val 전체를 ratios 로 재분할 (기존 split 이 깨지므로 권장하지 않음)
+  test_strategy: split_val
+  # split_val 전략에서 val 중 test 로 보낼 비율
+  test_ratio_of_val: 0.5
+  # 폴리곤(세그멘테이션) 라벨이 섞인 데이터셋 처리
+  #   auto   : 폴리곤 라벨이 발견되면 derived_data/dataset_normalized 에 bbox 로 정규화해 사용 (권장)
+  #   always : 항상 정규화
+  #   never  : 원본 라벨을 그대로 사용 (폴리곤이 섞여 있으면 모델별 정답이 달라질 수 있음)
+  # 원본 라벨 파일은 어떤 경우에도 수정하지 않는다.
+  normalize_polygon_labels: auto
+  # resplit_all 전략에서만 사용
+  ratios:
+    train: 0.70
+    val: 0.15
+    test: 0.15
+
+common:
+  epochs: 100
+  image_size: 640
+  seed: 42
+  device: cuda        # auto | cuda | cpu | 0 (GPU index) — 이 실험은 GPU 사용을 전제로 한다
+  # true 면 CUDA 를 쓸 수 없을 때 CPU 로 조용히 넘어가지 않고 학습을 중단한다.
+  # (CPU 로 4개 모델 x 100 epoch 학습은 현실적으로 불가능하므로 기본값 true)
+  # CPU 로도 강행하려면 false 로 바꾸거나 실행 시 --allow-cpu 옵션을 준다.
+  require_cuda: true
+  pretrained: true
+  workers: 0          # Windows multiprocessing 안전값 (0 = 메인 프로세스 로딩)
+  deterministic: true
+
+evaluation:
+  conf_threshold: 0.25      # Precision / Recall / F1 / 혼동행렬 / 예측 이미지용
+  map_conf_threshold: 0.001 # mAP(PR 곡선) 계산용 — 모든 모델 동일
+  iou_threshold: 0.5        # TP 매칭 IoU (P/R/F1, 혼동행렬)
+  nms_iou: 0.7              # NMS IoU — 모든 모델 동일
+  max_detections: 300
+  # coco     : COCO 기준 절대 면적 (small < 32^2, medium < 96^2 px)
+  # relative : 이미지 면적 대비 상대 기준 (small < 0.1%, medium < 1%)
+  area_criterion: coco
+
+benchmark:
+  warmup: 10        # 워밍업 추론 횟수 (측정에서 제외)
+  repeat: 3         # 테스트 이미지 전체를 몇 번 반복 측정할지
+  max_images: 100   # 속도 측정에 사용할 최대 test 이미지 수
+
+models:
+  yolov8:
+    enabled: true
+    framework: ultralytics
+    weights: yolov8n.pt
+    batch: 16
+    run_dir: runs/yolov8
+  yolo11:
+    enabled: true
+    framework: ultralytics
+    weights: yolo11n.pt
+    batch: 16
+    run_dir: runs/yolo11
+  rtdetr:
+    enabled: true
+    framework: ultralytics
+    weights: rtdetr-l.pt
+    # RTX 5060 8GB VRAM 기준 rtdetr-l(32M) 은 batch 4 에서 OOM 가능성이 커 2 로 낮춰 시작한다.
+    # 그래도 OOM 이 나면 oom_retry 가 자동으로 더 낮추고 실제 값을 결과에 기록한다.
+    batch: 2
+    run_dir: runs/rtdetr
+  faster_rcnn:
+    enabled: true
+    framework: torchvision
+    weights: fasterrcnn_resnet50_fpn_v2
+    # RTX 5060 8GB VRAM 기준 ResNet50-FPN-V2 는 batch 2 로 시작한다 (OOM 시 자동으로 더 낮춤)
+    batch: 2
+    run_dir: runs/faster_rcnn
+    # torchvision 학습 하이퍼파라미터 (YOLO 계열과 optimizer 가 다르므로 별도 기록)
+    optimizer: SGD
+    lr: 0.005
+    momentum: 0.9
+    weight_decay: 0.0005
+    lr_scheduler: cosine
+    warmup_iters: 500
+    horizontal_flip: 0.5   # YOLO 기본 fliplr=0.5 와 맞춘 유일한 augmentation
+
+# CUDA Out Of Memory 발생 시 batch 를 절반씩 낮추며 재시도 (최종 값은 반드시 기록)
+oom_retry:
+  enabled: true
+  min_batch: 1
+
+output:
+  results_dir: results
+  logs_dir: logs
+  derived_dir: derived_data
+  runs_dir: runs

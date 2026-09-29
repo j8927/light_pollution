@@ -15,7 +15,8 @@
 7. [테스트 및 검증 계획](#7-테스트-및-검증-계획)
 8. [기대효과 및 활용방안](#8-기대효과-및-활용방안)
 9. [향후 개선 방향](#9-향후-개선-방향)
-10. [참고문헌 및 법령](#10-참고문헌-및-법령)
+10. [객체탐지 모델 비교 실험](#10-객체탐지-모델-비교-실험)
+11. [참고문헌 및 법령](#11-참고문헌-및-법령)
 
 ---
 
@@ -547,7 +548,244 @@ async function downloadReport() {
 
 ---
 
-## 10. 참고문헌 및 법령
+## 10. 객체탐지 모델 비교 실험
+
+### 10-1. 목적
+
+기존 시스템은 YOLOv8 단일 모델로 광원을 탐지한다. 빛 공해 탐지에 어떤 객체탐지 모델이 더 적합한지를
+주관적 인상이 아니라 **동일 데이터 · 동일 조건 · 동일 평가 기준의 실측치**로 확인하기 위해
+4개 모델을 같은 데이터셋으로 학습하고 비교하는 실험 환경을 추가했다.
+
+기존 학습 스크립트(`train_model.py`)와 웹 서비스(`backend.py`), 기존 데이터셋·weight 는 그대로 유지되며,
+비교 실험 코드는 별도 폴더(`lpcompare/`, `training/`, `evaluation/`, `tools/`)에 추가되었다.
+
+### 10-2. 비교 대상 모델과 Framework
+
+| 모델 | 기본 weight | Framework | 비고 |
+|---|---|---|---|
+| YOLOv8 | `yolov8n.pt` | Ultralytics (`YOLO`) | 기존 시스템이 사용하는 계열 |
+| YOLO11 | `yolo11n.pt` | Ultralytics (`YOLO`) | YOLOv8 후속 세대 |
+| RT-DETR | `rtdetr-l.pt` | Ultralytics (`RTDETR`) | Transformer 기반, NMS 불필요 |
+| Faster R-CNN | `fasterrcnn_resnet50_fpn_v2` (COCO pretrained) | torchvision | 2-stage 검출기 |
+
+모델 규모가 서로 다르므로(nano 모델 vs. ResNet50 백본) 정확도 단독 비교가 아니라
+파라미터 수 · 모델 크기 · GFLOPs · GPU 메모리 · FPS 를 함께 기록한다.
+
+### 10-3. 데이터셋 구성
+
+- 데이터셋 루트: `config/experiment.yaml` 의 `dataset.root` (현재 값 `data`)
+- 지원 구조: `<root>/<split>/images` + `<root>/<split>/labels` (현재 프로젝트 구조) 및 `<root>/images/<split>` 구조 자동 판별
+- `data.yaml`: 데이터셋 루트의 `data.yaml` 또는 `light_pollution.yaml` 을 **읽기만** 한다
+- 라벨 형식: `class_id x_center y_center width height` (0~1 정규화)
+
+실제 연결된 데이터셋 (Roboflow `light_pollution` v8 export, 2026-09-29 `tools/validate_dataset.py` 실측)
+
+| 항목 | 값 |
+|---|---|
+| 경로 | `data/train`, `data/valid`, `data/test` (+ `data/data.yaml`) |
+| 이미지 | train 4,462 / val 1,161 / test 579 = **6,202장** |
+| bbox | train 22,971 / val 5,634 / test 3,201 = **31,806개** |
+| 클래스 3개 | `light_signboard`(0) / `lighting`(1) / `streetlight`(2) |
+| 라벨 없는 이미지 | 0장 (빈 라벨 파일 184개는 배경 이미지) |
+| 이미지 없는 라벨 | 0개 |
+
+클래스명은 데이터셋 `data.yaml` 의 영문 이름을 그대로 사용한다 (원본을 수정하지 않기 위함).
+웹 서비스(`backend.py`)는 이 이름을 `light_signboard → 간판`, `lighting → 조명`, `streetlight → 가로등`
+로 매핑해 사용한다.
+
+#### 폴리곤(세그멘테이션) 라벨 혼재 처리
+
+이 데이터셋에는 일반 bbox 라벨과 YOLO 폴리곤 라벨(`class x1 y1 x2 y2 ...`)이 섞여 있다.
+
+| 항목 | 수량 |
+|---|---|
+| 전체 라벨 파일 | 6,202개 |
+| bbox 전용 파일 | 5,774개 |
+| 폴리곤 전용 파일 | 70개 |
+| bbox + 폴리곤 혼재 파일 | 174개 |
+| 폴리곤 라인 | 490줄 |
+| 혼재 파일 안의 bbox 라인 | 821줄 |
+
+Ultralytics 는 `verify_image_label()` 에서 `any(len(x) > 6 for x in lb)` 조건을 쓰기 때문에,
+**파일 안에 폴리곤 라인이 한 줄이라도 있으면 그 파일의 모든 라인을 폴리곤으로 간주**해 좌표를 재해석한다.
+그 결과 혼재 파일의 정상 bbox 821줄이 전혀 다른 박스로 바뀐다. (실측 예: 정답 `0.585 0.902 0.173 0.197`
+→ 잘못 해석된 값 `0.379 0.549 0.413 0.705`)
+
+따라서 `tools/prepare_splits.py` 가 라벨을 **파생 데이터셋으로 정규화**한다
+(`config/experiment.yaml` 의 `splits.normalize_polygon_labels`, 기본값 `auto`).
+
+```text
+derived_data/dataset_normalized/<split>/labels/*.txt   폴리곤 -> 외접 bbox 로 변환한 라벨 (새로 생성)
+derived_data/dataset_normalized/<split>/images         원본 이미지 폴더로의 Windows junction (복사 아님)
+```
+
+- 폴리곤 라인은 Ultralytics `segments2boxes` 와 동일하게 폴리곤 점들의 최소/최대값으로 외접 bbox 를 만든다
+- 일반 bbox 라인은 좌표를 그대로 보존한다
+- 정규화 후 모든 라인이 5필드이므로 Ultralytics 가 폴리곤으로 오인하지 않는다 (검증: `segments=0`)
+- 박스 총 개수는 원본과 동일한 31,806개이며 손실이 없다
+- **원본 `data/` 의 이미지·라벨·data.yaml 은 어떤 경우에도 수정하지 않는다**
+
+이 정규화 덕분에 YOLO 계열과 Faster R-CNN 이 **완전히 동일한 정답 좌표**를 사용한다.
+
+#### Train / Validation / Test 구성
+
+모든 모델이 **완전히 동일한 이미지 목록**을 사용하도록, 원본을 복사·이동하지 않고
+이미지 경로 목록 파일만 생성한다.
+
+```text
+splits/train.txt        splits/val.txt        splits/test.txt
+splits/split_info.json          (어떤 방식으로 나눴는지 기록)
+derived_data/data_compare.yaml  (4개 모델 공용 data.yaml — 원본 data.yaml 은 수정하지 않음)
+```
+
+split 전략은 `config/experiment.yaml` 의 `splits.test_strategy` 로 정한다.
+
+| 전략 | 동작 |
+|---|---|
+| `existing` | 데이터셋에 `test` 폴더가 있으면 그대로 사용 |
+| `split_val` (기본값) | `test` 가 없으면 기존 `val` 을 seed 42 로 val/test 로 나눈다. **train 은 손대지 않는다** |
+| `use_val_as_test` | `val` 을 `test` 로 재사용 (val == test 이므로 성능이 과대평가되며 그 사실이 기록된다) |
+| `resplit_all` | 전체를 70/15/15 로 재분할 (기존 split 이 깨지므로 기본값 아님) |
+
+`test` 폴더가 이미 있으면 전략과 무관하게 기존 split 을 그대로 쓴다.
+
+### 10-4. 공통 실험 조건
+
+| 항목 | 값 |
+|---|---|
+| Image Size | 640 × 640 |
+| Epoch | 100 |
+| Random Seed | 42 |
+| Pretrained | True (COCO 사전학습 weight) |
+| Device | `cuda` — GPU 사용 전제. `common.require_cuda: true` 이므로 CUDA 를 쓸 수 없으면 CPU 로 대체하지 않고 **학습을 중단**한다 (`--allow-cpu` 로만 강행) |
+| DataLoader workers | 0 (Windows multiprocessing 문제 회피 기본값) |
+
+구조상 완전히 통일할 수 없는 항목은 억지로 맞추지 않고 **기록**한다.
+
+| 항목 | YOLOv8 / YOLO11 / RT-DETR | Faster R-CNN |
+|---|---|---|
+| optimizer | Ultralytics `optimizer=auto` (AdamW/SGD 자동 선택) | SGD (lr 0.005, momentum 0.9, weight_decay 0.0005, cosine + warmup) |
+| augmentation | mosaic / HSV / scale / fliplr 등 Ultralytics 기본값 | 좌우 반전(p=0.5)만 적용 |
+| loss | box / cls / dfl (RT-DETR 은 giou / cls / l1) | RPN 2종 + ROI head 2종 |
+
+#### Batch Size
+
+설정값은 YOLOv8 · YOLO11 = 16, RT-DETR = 2, Faster R-CNN = 2 이다.
+RT-DETR(`rtdetr-l`, 32M 파라미터)과 Faster R-CNN(ResNet50-FPN-V2)은 RTX 5060 8GB VRAM 에서
+batch 4 로는 OOM 가능성이 커 2 로 낮춰 시작하도록 설정했다.
+CUDA Out Of Memory 가 발생하면 batch 를 절반씩 낮춰 재시도하며(최소 1),
+**실제로 사용된 batch 와 재시도 이력**이 `runs/<model>/training_meta.json` 과
+`results/model_comparison.csv` 의 `Batch_Size` / `Requested_Batch` / `Note` 열에 그대로 남는다.
+
+### 10-5. Faster R-CNN 의 YOLO annotation 처리
+
+`training/yolo_dataset.py` 의 `YoloDetectionDataset` 이 원본 `.txt` 라벨을 **실행 시점에** 변환한다.
+COCO JSON 등 별도 포맷을 만들지 않으며 원본 라벨 파일은 수정하지 않는다.
+
+```text
+xmin = (x_center - width  / 2) * 이미지너비
+ymin = (y_center - height / 2) * 이미지높이
+xmax = (x_center + width  / 2) * 이미지너비
+ymax = (y_center + height / 2) * 이미지높이
+```
+
+- 변환 후 YOLO 와 동일한 letterbox(비율 유지 + 패딩)로 640×640 에 맞춘다
+- torchvision 규약에 맞춰 class id 를 0-based → 1-based 로 올린다 (0 = background)
+- 모델 내부 `GeneralizedRCNNTransform` 은 `min_size = max_size = 640` 으로 고정해 추가 리사이즈를 막는다
+- 추론 시에는 letterbox 변환을 역으로 적용해 **원본 이미지 좌표계**로 되돌린 뒤 평가한다
+
+### 10-6. 학습 결과 / weight 위치
+
+```text
+runs/yolov8/       runs/yolo11/       runs/rtdetr/       runs/faster_rcnn/
+  weights/best.pt, weights/last.pt
+  results.csv            (epoch 별 지표)
+  training_meta.json     (실제 batch, 학습 시간, device, GPU, 시작·종료 시각, 성공 여부, 오류 메시지)
+```
+
+기존 웹 서비스가 쓰는 `models/light_pollution_best.pt` 와 `models/light_pollution/` 은 건드리지 않는다.
+
+### 10-7. 평가 지표와 계산 방식
+
+4개 모델의 예측을 모두 같은 형식(pixel `xyxy` + score + class id)으로 모은 뒤,
+`lpcompare/metrics.py` 의 **단일 코드**로 지표를 계산한다. 프레임워크별 평가기를 쓰지 않으므로
+평가 기준 차이로 인한 왜곡이 없다.
+
+| 지표 | 계산 방식 |
+|---|---|
+| mAP@0.5, mAP@0.5:0.95 | COCO 방식 (IoU 0.50:0.05:0.95, 101-point interpolation) |
+| Precision / Recall / F1 | conf ≥ 0.25 예측을 IoU 0.5 로 greedy 매칭 |
+| Small / Medium / Large AP | COCO 면적 기준 (small < 32², medium < 96² px). `evaluation.area_criterion: relative` 로 상대 면적 기준(이미지 면적의 0.1% / 1%) 사용 가능 |
+| Confusion Matrix | (클래스 수 + 1) × (클래스 수 + 1), 마지막 행·열은 background (미탐 / 오탐) |
+| FPS / Inference Time | warm-up 후 반복 추론 평균. preprocess / inference / postprocess 분리 기록, 이미지 로딩 시간은 별도 측정 |
+| Parameters / Model Size / GFLOPs | 모델 파라미터 수, weight 파일 크기(MB), GFLOPs |
+| GPU Memory | 추론 중 `torch.cuda.max_memory_allocated` 최대값 (CPU 실행 시 측정 불가로 공란) |
+| Training Time | 학습 시작~종료 실측 시간 |
+
+- 모든 모델에 동일한 임계값을 적용한다: mAP 계산 conf 0.001, P/R/F1 conf 0.25, 매칭 IoU 0.5, NMS IoU 0.7, max detections 300
+- `torchmetrics` 가 설치돼 있으면 mAP 를 한 번 더 계산해 **교차 검증 값**을 로그에 남긴다 (선택 사항)
+- 측정하지 못한 값은 임의로 채우지 않고 공란으로 두며, 사유를 로그와 `Note` 열에 남긴다
+
+### 10-8. 결과 파일 위치
+
+```text
+results/model_comparison.csv          4개 모델 통합 비교표
+results/<model>_class_metrics.csv     클래스별 Precision/Recall/F1/AP50/AP50-95
+results/object_size_metrics.csv       작은 광원(Small)/Medium/Large AP
+results/dataset_report.txt | .csv     데이터셋 검사 리포트
+results/evaluation_summary.json       평가 원본 수치
+results/graphs/                       지표별 비교 막대그래프
+results/training_curves/              모델별 학습 곡선 + Ultralytics 원본 그래프 복사본
+results/confusion_matrix/             모델별 혼동행렬
+results/predictions/                  original / ground_truth / 모델별 예측 이미지
+results/comparison_images/            같은 이미지에 대한 정답 + 4개 모델 결과 한 장 비교
+logs/                                 모델별 로그 (yolov8.log, yolo11.log, rtdetr.log, faster_rcnn.log, experiment.log 등)
+```
+
+### 10-9. 실행 환경 (2026-09-29 `tools/check_environment.py` 실측)
+
+| 항목 | 값 |
+|---|---|
+| OS | Windows 10 Pro (10.0.19045) |
+| Python | 3.11.9 (`.venv`) |
+| PyTorch | 2.14.0+cpu |
+| Torchvision | 0.29.0+cpu |
+| Ultralytics | 8.3.36 |
+| GPU (nvidia-smi) | NVIDIA GeForce RTX 5060, 8151 MiB, 드라이버 616.56 (CUDA UMD 13.4) |
+| CUDA Available (PyTorch) | **False** |
+
+PyTorch 공식 휠 채널 조회 결과(2026-09-29, 설치는 하지 않음): `cu128` 채널은 torch 2.11.0 까지만 제공하며,
+현재 설치된 버전과 동일한 `torch 2.14.0` / `torchvision 0.29.0` 의 CUDA 빌드는 **`cu130` 채널**에 있다.
+드라이버가 CUDA 13.4 를 지원하므로 cu130 을 사용할 수 있다.
+
+### 10-10. 실행 시 주의사항 / 알려진 제한사항
+
+- **현재 설치된 PyTorch 는 CPU 전용 빌드(`2.14.0+cpu`, `torch.version.cuda = None`)다.**
+  이 빌드에는 CUDA 커널이 없어 설정이나 코드 수정만으로는 GPU 를 쓸 수 없으며,
+  RTX 5060 이 장착돼 있어도 4개 모델 × 100 epoch × 4,462장 학습을 현실적인 시간 안에 끝낼 수 없다.
+  따라서 `common.require_cuda: true` 상태에서 학습을 실행하면 CPU 로 대체하지 않고 즉시 중단하며,
+  원인과 해결 방법을 출력한다 (`run_all.py` 는 종료 코드 2, 개별 학습 스크립트는 1).
+  `python tools/check_environment.py` 가 확인 절차를 안내하며, 기존 환경을 깨지 않기 위해
+  코드가 자동으로 재설치하지는 않는다. CUDA 빌드 설치 후 `CUDA Available : True` 를 확인한 뒤 학습한다.
+  (평가만 하려면 `python run_all.py --evaluate-only`, CPU 로 강행하려면 `--allow-cpu`)
+- 데이터셋에 폴리곤 라벨이 섞여 있어 `derived_data/dataset_normalized` 의 정규화 라벨을 사용한다
+  (10-3 참고). `splits/*.txt` 도 이 파생 경로를 가리킨다. 파생 폴더를 지우면
+  `python tools/prepare_splits.py --force` 로 다시 만들 수 있다.
+- 파생 데이터셋의 `images` 는 원본 폴더를 가리키는 **Windows junction** 이다. 원본 `data/` 폴더를
+  옮기거나 이름을 바꾸면 링크가 끊어지므로, 그때는 split 을 다시 생성해야 한다.
+- 이미 학습된 weight 가 있으면 기본적으로 학습을 건너뛴다. 다시 학습하려면 `--overwrite` 를 명시해야 한다.
+- 한 모델이 실패해도 나머지 모델은 계속 실행되며, 최종 요약에 `[SUCCESS] / [FAILED]` 로 표시된다.
+- Ultralytics 가 자체 생성하는 그래프(`labels.jpg`, `confusion_matrix.png` 등)는 내부적으로 Arial 폰트를
+  사용하므로 한글 클래스명이 깨질 수 있다. 본 실험이 생성하는 그래프·이미지는 맑은 고딕을 사용해 정상 표시된다.
+- Faster R-CNN 의 GFLOPs 는 기록하지 않는다. torchvision 구현이 `list[Tensor]` 입력과 내부 transform 을
+  사용해 thop 표준 프로파일링이 적용되지 않기 때문이며, 그 사유가 `Note` 열에 남는다.
+- YOLO 계열/RT-DETR 은 Ultralytics 내부 계측값을, Faster R-CNN 은 직접 계측값을 사용한다.
+  Faster R-CNN 은 NMS 와 box decoding 이 forward 내부에서 수행되므로 `Inference_ms` 가 포함하는
+  연산 범위가 완전히 같지는 않다 (로그에 함께 기록된다).
+
+---
+
+## 11. 참고문헌 및 법령
 
 - 인공조명에 의한 빛공해 방지법  
   https://www.law.go.kr/법령/인공조명에의한빛공해방지법

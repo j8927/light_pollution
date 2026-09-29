@@ -11,3 +11,15 @@ torch>=2.0.0
 ultralytics==8.3.36
 easyocr==1.7.2
 tifffile==2024.9.20
+
+# --- 객체탐지 모델 비교 실험 (YOLOv8 / YOLO11 / RT-DETR / Faster R-CNN) ---
+# 아래 패키지는 대부분 ultralytics 설치 시 함께 들어오지만, 실험 코드가 직접 사용하므로 명시한다.
+# torchvision 은 Faster R-CNN(fasterrcnn_resnet50_fpn_v2) 에 필요하며,
+# 반드시 설치된 torch 와 같은 빌드(CPU / CUDA 버전)를 사용해야 한다.
+torchvision>=0.15.0
+PyYAML>=6.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+tqdm>=4.65.0
+# 선택: 설치하면 평가 시 mAP 를 torchmetrics 로 한 번 더 계산해 교차 검증 값을 로그에 남긴다.
+# torchmetrics>=1.0.0
