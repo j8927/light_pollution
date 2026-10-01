@@ -15,7 +15,7 @@
 7. [테스트 및 검증 계획](#7-테스트-및-검증-계획)
 8. [기대효과 및 활용방안](#8-기대효과-및-활용방안)
 9. [향후 개선 방향](#9-향후-개선-방향)
-10. [객체탐지 모델 비교 실험](#10-객체탐지-모델-비교-실험)
+10. [객체탐지 모델 비교 실험](#10-객체탐지-모델-비교-실험) — [본 학습 결과](#10-11-본-학습-결과-2026-09-30--10-01-실측)
 11. [참고문헌 및 법령](#11-참고문헌-및-법령)
 
 ---
@@ -742,27 +742,40 @@ results/comparison_images/            같은 이미지에 대한 정답 + 4개 �
 logs/                                 모델별 로그 (yolov8.log, yolo11.log, rtdetr.log, faster_rcnn.log, experiment.log 등)
 ```
 
-### 10-9. 실행 환경 (2026-09-29 `tools/check_environment.py` 실측)
+### 10-9. 실행 환경 (2026-09-29 `tools/check_environment.py` 실측, 본 학습에 사용된 환경)
 
 | 항목 | 값 |
 |---|---|
 | OS | Windows 10 Pro (10.0.19045) |
 | Python | 3.11.9 (`.venv`) |
-| PyTorch | 2.14.0+cpu |
-| Torchvision | 0.29.0+cpu |
+| PyTorch | **2.14.0+cu130** |
+| Torchvision | **0.29.0+cu130** |
 | Ultralytics | 8.3.36 |
-| GPU (nvidia-smi) | NVIDIA GeForce RTX 5060, 8151 MiB, 드라이버 616.56 (CUDA UMD 13.4) |
-| CUDA Available (PyTorch) | **False** |
+| torchmetrics | 1.9.0 (선택, 교차검증용) |
+| GPU | NVIDIA GeForce RTX 5060, 7.93 GB, 드라이버 616.56 |
+| CUDA (PyTorch) | **13.0**, cuDNN 92400, `CUDA Available: True`, 연산 능력 sm_120 |
 
-PyTorch 공식 휠 채널 조회 결과(2026-09-29, 설치는 하지 않음): `cu128` 채널은 torch 2.11.0 까지만 제공하며,
-현재 설치된 버전과 동일한 `torch 2.14.0` / `torchvision 0.29.0` 의 CUDA 빌드는 **`cu130` 채널**에 있다.
-드라이버가 CUDA 13.4 를 지원하므로 cu130 을 사용할 수 있다.
+#### CUDA 빌드 설치 시 주의 (실제로 겪은 문제)
+
+처음에는 `torch 2.14.0+cpu` 가 설치돼 있어 GPU 를 쓸 수 없었다. 설치 과정에서 두 가지를 확인했다.
+
+1. **채널 선택** — `cu128` 채널은 torch 2.11.0 까지만 제공한다. 설치돼 있던 것과 같은 버전
+   (`torch 2.14.0` / `torchvision 0.29.0`)의 CUDA 빌드는 **`cu130` 채널**에 있고, 드라이버가
+   CUDA 13.4 를 지원하므로 cu130 을 사용했다.
+2. **로컬 버전 라벨 필수** — `pip install torch==2.14.0` 처럼 쓰면 PEP 440 이 로컬 버전 라벨
+   (`+cpu`, `+cu130`)을 무시하기 때문에, pip 이 이미 설치된 `2.14.0+cpu` 를 조건 충족으로 보고
+   **아무것도 설치하지 않는다.** 반드시 `+cu130` 까지 붙여야 한다.
+
+```powershell
+pip install --index-url https://download.pytorch.org/whl/cu130 torch==2.14.0+cu130 torchvision==0.29.0+cu130
+```
+
+이 내용은 `tools/check_environment.py` 의 안내에도 반영돼 있다.
 
 ### 10-10. 실행 시 주의사항 / 알려진 제한사항
 
-- **현재 설치된 PyTorch 는 CPU 전용 빌드(`2.14.0+cpu`, `torch.version.cuda = None`)다.**
-  이 빌드에는 CUDA 커널이 없어 설정이나 코드 수정만으로는 GPU 를 쓸 수 없으며,
-  RTX 5060 이 장착돼 있어도 4개 모델 × 100 epoch × 4,462장 학습을 현실적인 시간 안에 끝낼 수 없다.
+- **CPU 로는 학습이 사실상 불가능하다.** 참고로 CUDA 설치 전 CPU 에서 측정한 값은
+  YOLOv8n 2 epoch 에 20.4분, YOLO11n 2 epoch 에 23.5분이었다 (GPU 에서는 100 epoch 에 각각 1.7 / 1.8시간).
   따라서 `common.require_cuda: true` 상태에서 학습을 실행하면 CPU 로 대체하지 않고 즉시 중단하며,
   원인과 해결 방법을 출력한다 (`run_all.py` 는 종료 코드 2, 개별 학습 스크립트는 1).
   `python tools/check_environment.py` 가 확인 절차를 안내하며, 기존 환경을 깨지 않기 위해
@@ -782,6 +795,106 @@ PyTorch 공식 휠 채널 조회 결과(2026-09-29, 설치는 하지 않음): `c
 - YOLO 계열/RT-DETR 은 Ultralytics 내부 계측값을, Faster R-CNN 은 직접 계측값을 사용한다.
   Faster R-CNN 은 NMS 와 box decoding 이 forward 내부에서 수행되므로 `Inference_ms` 가 포함하는
   연산 범위가 완전히 같지는 않다 (로그에 함께 기록된다).
+
+### 10-11. 본 학습 결과 (2026-09-30 ~ 10-01 실측)
+
+아래 수치는 모두 `python run_all.py --overwrite --val-map-interval 5` 실행으로 실제 측정된 값이다.
+원본은 `results/model_comparison.csv` 이며, 재실행하면 갱신된다.
+
+#### 학습 실행 정보
+
+| 항목 | 값 |
+|---|---|
+| 기간 | 2026-09-30 06:59 ~ 2026-10-01 08:28 |
+| 전체 소요 | 92,147초 (25.6시간) — 학습 + 평가 + 그래프 + 예측 이미지 포함 |
+| Device | 전 모델 `cuda:0` (RTX 5060) |
+| Epoch / Image size / Seed | 100 / 640 / 42 (4개 모델 동일) |
+| 실패 | 없음 (4개 모델 모두 `[SUCCESS]`, OOM 재시도 0회) |
+
+| 모델 | Batch | 학습 시간 | 학습 중 GPU 최대 |
+|---|---|---|---|
+| YOLOv8 | 16 | 1:43:35 | 2,323 MB |
+| YOLO11 | 16 | 1:48:52 | 2,588 MB |
+| RT-DETR | 2 | 9:56:31 | 2,396 MB |
+| Faster R-CNN | 2 | 12:00:01 | 2,066 MB |
+
+Batch 는 요청값 그대로 사용됐고 OOM 으로 인한 자동 조정은 일어나지 않았다.
+RT-DETR 과 Faster R-CNN 의 batch 가 2 인 것은 8GB VRAM 을 고려한 사전 설정이며,
+학습 시간 차이(약 6~7배)의 주된 원인이다. 즉 **학습 시간은 모델 구조와 batch 가 함께 작용한 결과**이므로
+구조만의 비교로 해석하면 안 된다.
+
+#### 평가 조건 (4개 모델 공통)
+
+test 579장 / GT 3,201개, conf 0.25 (P·R·F1·혼동행렬), mAP 계산 conf 0.001,
+매칭 IoU 0.5, NMS IoU 0.7, imgsz 640, 추론은 전 모델 동일 GPU.
+
+#### 종합 비교
+
+| Model | Precision | Recall | F1 | mAP@0.5 | mAP@0.5:0.95 | FPS | Inference | Params | GFLOPs | Size |
+|---|---|---|---|---|---|---|---|---|---|---|
+| YOLOv8 | 0.6136 | 0.5667 | 0.5858 | 0.5497 | 0.2869 | 200.4 | 3.0 ms | 3,006,233 | 8.1 | 6.0 MB |
+| YOLO11 | 0.6388 | 0.5418 | 0.5780 | 0.5517 | 0.3030 | 185.8 | 3.5 ms | 2,582,737 | 6.3 | 5.2 MB |
+| RT-DETR | 0.2999 | 0.5280 | 0.3655 | 0.4068 | 0.2126 | 43.1 | 21.2 ms | 31,989,905 | 105.3 | 63.1 MB |
+| Faster R-CNN | 0.3420 | 0.5909 | 0.4152 | 0.4737 | 0.2492 | 19.2 | 49.2 ms | 43,266,403 | N/A | 165.4 MB |
+
+| Model | TP | FP (오탐) | FN (미탐) | 추론 GPU 메모리 |
+|---|---|---|---|---|
+| YOLOv8 | 1,972 | 1,079 | 1,229 | 97 MB |
+| YOLO11 | 1,977 | 942 | 1,224 | 111 MB |
+| RT-DETR | 2,230 | 4,156 | 971 | 329 MB |
+| Faster R-CNN | 2,310 | 4,226 | 891 | 669 MB |
+
+#### 클래스별 AP@0.5:0.95
+
+| Model | light_signboard (GT 1,281) | lighting (GT 1,751) | streetlight (GT 169) |
+|---|---|---|---|
+| YOLOv8 | 0.5350 | 0.2283 | 0.0975 |
+| YOLO11 | 0.5574 | 0.2436 | 0.1080 |
+| RT-DETR | 0.4562 | 0.1643 | 0.0171 |
+| Faster R-CNN | 0.4973 | 0.1949 | 0.0555 |
+
+#### 객체 크기별 AP@0.5:0.95 (COCO 기준)
+
+| Model | Small | Medium | Large |
+|---|---|---|---|
+| YOLOv8 | 0.0837 | 0.1185 | 0.2988 |
+| YOLO11 | 0.0883 | 0.1412 | 0.3110 |
+| RT-DETR | 0.0565 | 0.0527 | 0.1727 |
+| Faster R-CNN | 0.0580 | 0.1157 | 0.1957 |
+
+#### 학습 곡선에서 관찰된 사항
+
+`runs/<model>/results.csv` 의 validation 기록이다. 모델별로 수렴 양상이 크게 달랐다.
+
+| Model | val mAP@0.5 최고 | 최고 시점 | 100 epoch 시점 |
+|---|---|---|---|
+| YOLOv8 | 0.5060 | epoch 76 | 0.4905 |
+| YOLO11 | 0.5203 | epoch 77 | 0.4973 |
+| RT-DETR | 0.4047 | **epoch 1** | 0.3553 |
+| Faster R-CNN | 0.4949 | **epoch 5** | 0.4206 |
+
+- YOLO 계열은 70~80 epoch 부근까지 성능이 올라가며 100 epoch 설정이 적절했다.
+- RT-DETR 과 Faster R-CNN 은 **초기 epoch 에서 정점을 찍고 이후 하락**했다.
+  Faster R-CNN 은 train_loss 0.392 → 0.089 로 계속 떨어지는 동안 val_loss 가 0.429 → 0.766 으로
+  계속 올라가는 전형적인 과적합을 보였다 (val mAP@0.5:0.95 는 epoch 10 의 0.2514 가 최고).
+- 다만 두 모델 모두 **best checkpoint 를 val 기준으로 선택**하므로, 위 비교표의 수치는
+  과적합된 마지막 epoch 이 아니라 정점 시점의 가중치로 측정한 값이다
+  (Faster R-CNN best = epoch 10, `runs/faster_rcnn/training_meta.json` 의 `best_epoch`).
+- 즉 RT-DETR / Faster R-CNN 의 낮은 점수는 "구조가 이 과제에 부적합하다"는 결론이 아니라,
+  **YOLO 와 동일하게 맞춘 공통 조건(100 epoch, 동일 seed, Ultralytics 기본 하이퍼파라미터 /
+  torchvision SGD 설정)이 이 두 구조에는 맞지 않았을 가능성**을 함께 고려해야 한다.
+  학습률·스케줄·augmentation 을 구조별로 조정하면 달라질 수 있는 영역이며, 이번 실험은
+  조건 통일을 우선했기 때문에 그 조정을 하지 않았다 (10-4 참고).
+
+#### 해석 시 유의점
+
+- 이 실험은 특정 모델을 "최고"로 선정하지 않는다. 위 수치를 정확도 / 오탐 / 미탐 /
+  작은 광원 / 속도 / 모델 크기 / GPU 요구량 측면에서 각각 비교해 판단해야 한다.
+- `streetlight` 는 test GT 가 169개로 다른 클래스의 1/8~1/10 수준이라 모든 모델에서 AP 가 낮다.
+  데이터 불균형의 영향이며 모델 성능만으로 해석할 수 없다 (10-3 의 데이터셋 검사 결과 참고).
+- Small 객체 AP 는 모든 모델에서 Large 대비 크게 낮다. 멀리 있는 작은 광원 탐지는
+  네 모델 모두 개선 여지가 있는 영역이다.
+- Faster R-CNN 의 GFLOPs 는 측정하지 않았다 (사유는 10-10 참고).
 
 ---
 

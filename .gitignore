@@ -14,3 +14,8 @@ splits/*.txt
 results/predictions/
 results/comparison_images/
 results/inference/
+
+# 학습 결과 백업 폴더 (runs_2ep_*, runs_backup_* 등) — weight 가 100MB 를 넘어 GitHub push 가 막힌다
+runs_*/
+# Ultralytics 가 자동 다운로드하는 사전학습 weight (저장소에 둘 필요 없음)
+rtdetr-l.pt
