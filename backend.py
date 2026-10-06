@@ -609,6 +609,47 @@ def summarize_pollution_categories(detected):
     }
 
 
+def summarize_signboards(detected):
+    """같은 촬영 장면의 간판을 비교해 지역 편차를 설명할 요약값을 만든다.
+
+    외부 상점 데이터에는 밝기 측정값이 없으므로, 법규 기준을 지역 평균으로
+    임의 보정하지 않고 현재 이미지에서 확인된 간판만 비교 기준으로 사용한다.
+    """
+    signboards = [item for item in detected if item.get('type') == '간판']
+    if not signboards:
+        return {
+            'count': 0,
+            'averageBrightness': None,
+            'medianBrightness': None,
+            'averageLuminanceCdM2': None,
+            'maxBrightness': None,
+            'note': '비교할 간판이 없습니다.',
+        }
+
+    brightness_values = [
+        float(item.get('stableBrightness', item.get('brightnessP95', item.get('brightness', 0))))
+        for item in signboards
+    ]
+    luminance_values = [
+        float(item.get('stableLuminanceCdM2', item.get('luminanceCdM2Max', item.get('luminanceCdM2', 0))))
+        for item in signboards
+    ]
+    median_brightness = float(np.median(brightness_values))
+    average_brightness = float(np.mean(brightness_values))
+    return {
+        'count': len(signboards),
+        'averageBrightness': round(average_brightness, 1),
+        'medianBrightness': round(median_brightness, 1),
+        'averageLuminanceCdM2': round(float(np.mean(luminance_values)), 1),
+        'maxBrightness': round(max(brightness_values), 1),
+        'outlierDeviationPercent': round(
+            ((max(brightness_values) - median_brightness) / max(1.0, median_brightness)) * 100.0, 1
+        ),
+        'baseline': '현재 이미지에서 탐지된 간판의 안정 보정 밝기 중앙값',
+        'note': '지역 평균이 아닌 동일 촬영 장면의 간판 비교값입니다. 법규 기준 자체는 변경하지 않습니다.',
+    }
+
+
 def build_default_zones_summary():
     """EXIF/GPS 미확인 시 기본 4개 구역 시뮬레이션 결과(탐지 실패 대비)."""
     return {
@@ -884,15 +925,35 @@ def _build_pdf_report_bytes(report_data):
         leading=10,
         textColor=colors.HexColor('#5c667a'),
     ))
+    styles.add(ParagraphStyle(
+        name='KrTable',
+        parent=styles['BodyText'],
+        fontName=font_name,
+        fontSize=8.1,
+        leading=10,
+        wordWrap='CJK',
+    ))
+    styles.add(ParagraphStyle(
+        name='KrTableHeader',
+        parent=styles['KrTable'],
+        textColor=colors.white,
+        fontSize=8,
+        leading=9.5,
+    ))
 
     def make_table(rows, col_widths=None, header_fill='#1f4e79'):
-        table = Table(rows, colWidths=col_widths, repeatRows=1)
+        table_rows = []
+        for row_index, row in enumerate(rows):
+            cell_style = styles['KrTableHeader'] if row_index == 0 else styles['KrTable']
+            table_rows.append([
+                value if isinstance(value, Paragraph) else Paragraph(str(value), cell_style)
+                for value in row
+            ])
+        table = Table(table_rows, colWidths=col_widths, repeatRows=1, hAlign='LEFT')
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(header_fill)),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('FONTNAME', (0, 0), (-1, -1), font_name),
-            ('FONTSIZE', (0, 0), (-1, -1), 8.5),
-            ('LEADING', (0, 0), (-1, -1), 10.5),
             ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#c8d2e3')),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor('#f7f9fc')]),
@@ -917,6 +978,7 @@ def _build_pdf_report_bytes(report_data):
     overall = report_data.get('overall') or '미탐지'
     pollution_overall = report_data.get('pollutionOverall') or overall
     pollution_summary = report_data.get('pollutionSummary') or {}
+    signboard_summary = report_data.get('signboardSummary') or {}
     counts = pollution_summary.get('counts') or {}
     model_status = report_data.get('modelStatus') or MODEL_STATUS
     file_name = report_data.get('fileName') or '미상'
@@ -930,30 +992,44 @@ def _build_pdf_report_bytes(report_data):
     capture_exposure = capture_context.get('exposureMs') if capture_context.get('exposureMs') is not None else '-'
     capture_angle = capture_context.get('angleDeg') if capture_context.get('angleDeg') is not None else '-'
 
+    if overall == '미탐지':
+        owner_result = '광원 대상이 확인되지 않았습니다. 다른 각도에서 다시 촬영해 보세요.'
+    elif total_fine > 0:
+        owner_result = f'기준 초과가 의심되는 조명 {violation_count}건이 확인되었습니다. 현장 측정을 권장합니다.'
+    else:
+        owner_result = '사진에서 확인된 조명은 입력한 구역 기준을 초과하지 않았습니다.'
+
+    owner_action = (
+        '밝기와 점등 방향을 먼저 확인하고, 최종 판단은 휘도계·조도계 현장 측정으로 확인하세요.'
+        if total_fine > 0 else
+        '현재 사진 기준으로는 큰 초과가 보이지 않지만, 촬영 조건에 따라 결과가 달라질 수 있습니다.'
+    )
+
     summary_rows = [
         ['항목', '내용', '항목', '내용'],
-        ['파일명', file_name, '파일 크기', file_size],
-        ['분석 시간', analysis_time, '생성 시간', generated_at],
-        ['종합 판정', overall, '총 과태료', f'{total_fine}만원'],
-        ['위반 건수', f'{violation_count}건', '대표 분류', pollution_overall],
+        ['분석 대상', file_name, '분석 일시', analysis_time],
+        ['종합 안내', owner_result, '확인된 조명', f'{len(detected)}건'],
+        ['현장 확인 권장', owner_action, '예상 과태료 수준', f'{total_fine}만원' if total_fine else '없음'],
+        ['빛 공해 유형', pollution_overall, '기준 초과 의심', f'{violation_count}건'],
+        ['간판 탐지 수', f"{signboard_summary.get('count', 0)}건", '간판 평균 밝기',
+         f"{signboard_summary.get('averageLuminanceCdM2', '-')} cd/m²"],
+        ['간판 중앙값 밝기', signboard_summary.get('medianBrightness', '-'), '최고값 편차',
+         f"{signboard_summary.get('outlierDeviationPercent', '-')}%"],
         ['조명환경관리구역', f'{zone} ({zone_label})', 'GPS', gps_text],
-        ['GPS 판별', yes_no(bool(report_data.get('gpsDetected'))), '구역별 시뮬레이션', yes_no(all_zones_mode)],
-        ['모델 상태', model_status, '위험 요약', risk_summary],
-        ['촬영 조건', capture_summary, '보정 기종', capture_label],
-        ['ISO / 노출', f'{capture_iso} / {capture_exposure} ms', '촬영 각도', f'{capture_angle}°'],
+        ['촬영 기기', capture_label, '위치 확인', 'GPS 확인' if report_data.get('gpsDetected') else '위치 미확인'],
     ]
 
     story = [
         Paragraph('빛 공해 법규 위반 탐지 및 판정 리포트', styles['KrTitle']),
         Spacer(1, 4 * mm),
-        Paragraph('법적 증빙 참고용 자동 생성 문서', styles['KrBody']),
+        Paragraph('점주가 확인하기 위한 이미지 기반 참고 리포트', styles['KrBody']),
         Spacer(1, 4 * mm),
         make_table(summary_rows, col_widths=[26 * mm, 58 * mm, 28 * mm, 58 * mm]),
         Spacer(1, 5 * mm),
         Paragraph('법규 적용 기준', styles['KrHeading']),
         Paragraph(
-            '본 리포트는 인공조명에 의한 빛공해 방지법, 동 시행령 제8조, 동 시행규칙 별표의 조명환경관리구역 기준을 바탕으로 '
-            '이미지 기반 추정값을 평가한 결과입니다. 실제 행정 처분은 관할 기관의 공식 측정 및 현장 확인에 따릅니다.',
+            '이 결과는 사진에서 보이는 밝기를 법규 기준과 비교한 참고용 안내입니다. 간판 평균은 같은 사진에서 확인된 간판끼리의 비교값이며, '
+            '법규 기준을 대신하거나 실제 과태료를 확정하지 않습니다. 최종 판단은 현장 측정과 관할 기관의 확인이 필요합니다.',
             styles['KrBody'],
         ),
         Spacer(1, 3 * mm),
@@ -981,7 +1057,7 @@ def _build_pdf_report_bytes(report_data):
 
     if detected:
         detail_rows = [[
-            '객체명', '유형', '빛 공해 분류', '법규 유형', '측정값', '기준값', '판정', '과태료'
+            '대상', '종류', '밝기 측정값', '기준값', '결과', '예상 과태료'
         ]]
         for item in detected:
             unit = item.get('unit') or ('lux' if item.get('type') == '가로등' else 'cd/m²')
@@ -992,26 +1068,26 @@ def _build_pdf_report_bytes(report_data):
             compliance = item.get('compliance') or '미분류'
             stage = item.get('violationStage') or '준수'
             fine_amount = item.get('fineAmount') or 0
+            object_name = item.get('storeName') or item.get('name') or '조명 대상'
+            result_text = '기준 초과 의심' if compliance == '위반' else compliance
             detail_rows.append([
-                item.get('name') or '-',
+                object_name,
                 item.get('type') or '-',
-                f"{item.get('pollutionCategory') or '-'}",
-                item.get('lightType') or '-',
                 f"{measured_value:.1f} {unit}" if isinstance(measured_value, (int, float)) else f'- {unit}',
                 f"{threshold} {unit}" if threshold not in (None, '') else '-',
-                f'{compliance}{" / " + stage if stage != "준수" else ""}',
+                f'{result_text}{" (" + stage + ")" if stage != "준수" else ""}',
                 f'{fine_amount}만원' if fine_amount else '없음',
             ])
 
         story.extend([
-            Paragraph('탐지 객체별 상세 분석', styles['KrHeading']),
-            make_table(detail_rows, col_widths=[20 * mm, 16 * mm, 20 * mm, 18 * mm, 20 * mm, 20 * mm, 22 * mm, 18 * mm], header_fill='#6b4f2a'),
+            Paragraph('조명별 확인 결과', styles['KrHeading']),
+            make_table(detail_rows, col_widths=[42 * mm, 24 * mm, 30 * mm, 28 * mm, 32 * mm, 22 * mm], header_fill='#6b4f2a'),
             Spacer(1, 4 * mm),
         ])
     else:
         story.extend([
-            Paragraph('탐지 객체별 상세 분석', styles['KrHeading']),
-            Paragraph('광원 객체가 탐지되지 않아 세부 위반 항목은 산출되지 않았습니다.', styles['KrBody']),
+            Paragraph('조명별 확인 결과', styles['KrHeading']),
+            Paragraph('사진에서 확인된 조명 대상이 없어 세부 비교를 진행하지 못했습니다.', styles['KrBody']),
             Spacer(1, 4 * mm),
         ])
 
@@ -1024,7 +1100,7 @@ def _build_pdf_report_bytes(report_data):
     story.extend([
         Paragraph('종합 해석', styles['KrHeading']),
         Paragraph(
-            f'대표 분류는 {pollution_overall}이며, 유형별 집계는 {counts_text}입니다. 총 과태료는 {total_fine}만원, 위반 건수는 {violation_count}건입니다.',
+            f'{owner_result} 대표 유형은 {pollution_overall}이며, 확인된 조명은 {len(detected)}건입니다. {owner_action}',
             styles['KrBody'],
         ),
         Spacer(1, 2 * mm),
@@ -1956,6 +2032,11 @@ def analyze_api():
                 else:
                     cat = classify_by_geometry(x1, y1, x2, y2, h, w)
 
+                # 간판은 단일 포화 픽셀에 흔들리지 않도록 95백분위 밝기를
+                # 안정 보정값으로 사용하고, 원본 max 값은 참고 정보로 유지한다.
+                stable_brightness = adjusted_metrics['brightness_p95'] if cat == '간판' else adjusted_metrics['brightness']
+                stable_luminance_cd_m2 = estimate_luminance_cd_m2(stable_brightness)
+
                 ocr_result = {
                     'storeName': None,
                     'ocrText': '',
@@ -1977,7 +2058,9 @@ def analyze_api():
                 )
                 if all_zones_mode:
                     zone_results = {
-                        zc: compute_fine(adjusted_metrics['luminance_cd_m2_avg'], adjusted_metrics['luminance_cd_m2_max'],
+                        zc: compute_fine(
+                                         stable_luminance_cd_m2 if cat == '간판' else adjusted_metrics['luminance_cd_m2_avg'],
+                                         stable_luminance_cd_m2 if cat == '간판' else adjusted_metrics['luminance_cd_m2_max'],
                                          adjusted_metrics['illuminance_lux_max'], light_type, zc)
                         for zc in ('제1종', '제2종', '제3종', '제4종')
                     }
@@ -1985,7 +2068,8 @@ def analyze_api():
                 else:
                     zone_results = None
                     fine = compute_fine(
-                        adjusted_metrics['luminance_cd_m2_avg'], adjusted_metrics['luminance_cd_m2_max'],
+                        stable_luminance_cd_m2 if cat == '간판' else adjusted_metrics['luminance_cd_m2_avg'],
+                        stable_luminance_cd_m2 if cat == '간판' else adjusted_metrics['luminance_cd_m2_max'],
                         adjusted_metrics['illuminance_lux_max'], light_type, zone_code
                     )
 
@@ -1999,10 +2083,13 @@ def analyze_api():
                     'ocrConfidence':    ocr_result['ocrConfidence'],
                     'ocrStatus':        ocr_result['ocrStatus'],
                     'brightness':       int(round(adjusted_metrics['brightness'])),
+                    'stableBrightness': round(stable_brightness, 1),
+                    'stableBrightnessMethod': '95백분위 안정 보정' if cat == '간판' else '평균 밝기',
                     'rawBrightness':    int(round(brightness)),
                     'luminanceCdM2':    round(adjusted_metrics['luminance_cd_m2_avg'], 1),
                     'rawLuminanceCdM2': round(luminance_cd_m2_avg, 1),
                     'luminanceCdM2Max': round(adjusted_metrics['luminance_cd_m2_max'], 1),
+                    'stableLuminanceCdM2': round(stable_luminance_cd_m2, 1),
                     'rawLuminanceCdM2Max': round(luminance_cd_m2_max, 1),
                     'illuminanceLux':   round(adjusted_metrics['illuminance_lux_avg'], 1),
                     'rawIlluminanceLux': round(illuminance_lux_avg, 1),
@@ -2018,7 +2105,10 @@ def analyze_api():
                     'rawGamma':         round(gamma, 2),
                     'pollutionCategory': pollution_category,
                     'pollutionCategoryDesc': POLLUTION_TYPES[pollution_category],
-                    'measurementNote':  'cd/m², lux 값은 이미지 기반 참고용 추정치입니다.',
+                    'measurementNote':  (
+                        '간판은 95백분위 안정 보정값을 사용한 이미지 기반 참고용 추정치입니다.'
+                        if cat == '간판' else 'cd/m², lux 값은 이미지 기반 참고용 추정치입니다.'
+                    ),
                     'compliance':       fine['compliance'],
                     'violationStage':   fine['violationStage'],
                     'fineLabel':        fine.get('fineLabel'),
@@ -2065,6 +2155,7 @@ def analyze_api():
             }
 
     pollution_summary = summarize_pollution_categories(detected)
+    signboard_summary = summarize_signboards(detected)
 
     # 탐지 실패
     if not detected:
@@ -2080,6 +2171,7 @@ def analyze_api():
             'zonesSummary':  zones_summary,
             'overallPollutionCategory': pollution_summary['overall'],
             'pollutionCategorySummary': pollution_summary,
+            'signboardSummary': signboard_summary,
             'captureContext': capture_context,
             'avgBrightness': int(np.mean(gray_img)),
             'model':         MODEL_STATUS,

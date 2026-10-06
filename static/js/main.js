@@ -30,7 +30,77 @@ const CAMERA_MODEL_LABELS = {
   default: "기본값"
 };
 
-const PAGE_VERSION = "20260511-1";
+const PAGE_VERSION = "20261006-2";
+
+let activeResultMap = null;
+
+function escapeMapText(value) {
+  return escapeHtml(String(value ?? ""));
+}
+
+function initializeResultMap(rawGps, detected, signboardSummary = {}) {
+  const mapEl = document.getElementById("resultMap");
+  const statusEl = document.getElementById("resultMapStatus");
+  if (!mapEl) return null;
+
+  const lat = Number(rawGps?.lat);
+  const lon = Number(rawGps?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    mapEl.innerHTML = '<div class="result-map-empty">EXIF GPS가 없어 조사 위치를 지도에 표시할 수 없습니다.</div>';
+    if (statusEl) statusEl.textContent = "GPS 미확인";
+    return null;
+  }
+  if (!window.L) {
+    mapEl.innerHTML = '<div class="result-map-empty">지도 모듈을 불러오지 못했습니다. 좌표는 리포트에 보존됩니다.</div>';
+    if (statusEl) statusEl.textContent = "지도 준비 실패";
+    return null;
+  }
+
+  const map = window.L.map(mapEl, { scrollWheelZoom: false }).setView([lat, lon], 17);
+  window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "© OpenStreetMap contributors",
+  }).addTo(map);
+  const markerLayer = window.L.layerGroup().addTo(map);
+  const signNames = [...new Set((detected || [])
+    .filter((item) => item.type === "간판")
+    .map((item) => item.storeName || item.name)
+    .filter(Boolean))];
+  const averageLuminance = Number(signboardSummary.averageLuminanceCdM2);
+  const medianBrightness = Number(signboardSummary.medianBrightness);
+  const summaryText = signboardSummary.count
+    ? `<br/>장면 평균 휘도: ${Number.isFinite(averageLuminance) ? Math.round(averageLuminance) : "-"} cd/m²` +
+      `<br/>안정 밝기 중앙값: ${Number.isFinite(medianBrightness) ? Math.round(medianBrightness) : "-"} / 255`
+    : "";
+  const popup = `<strong>조사 촬영 위치</strong><br/>간판 ${signNames.length}건${summaryText}` +
+    (signNames.length ? `<br/><small>${signNames.map(escapeMapText).join(", ")}</small>` : "");
+  window.L.marker([lat, lon]).addTo(markerLayer).bindPopup(popup).openPopup();
+  if (statusEl) statusEl.textContent = "촬영 위치 확인";
+  activeResultMap = { map, markerLayer, lat, lon };
+  window.setTimeout(() => map.invalidateSize(), 0);
+  return activeResultMap;
+}
+
+function updateResultMapStores(stores) {
+  if (!activeResultMap || !window.L) return;
+  (stores || []).slice(0, 10).forEach((store) => {
+    const lat = Number(store.lat);
+    const lon = Number(store.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    const distance = Number(store.distanceMeters);
+    const distanceText = Number.isFinite(distance) ? `${Math.round(distance)}m` : "거리 미상";
+    window.L.circleMarker([lat, lon], {
+      radius: 5,
+      color: "#d97706",
+      fillColor: "#f59e0b",
+      fillOpacity: 0.85,
+      weight: 1,
+    }).addTo(activeResultMap.markerLayer)
+      .bindPopup(`<strong>${escapeMapText(store.name || "주변 상점")}</strong><br/>${escapeMapText(distanceText)}<br/><small>${escapeMapText(store.address || "주소 미상")}</small>`);
+  });
+  const statusEl = document.getElementById("resultMapStatus");
+  if (statusEl) statusEl.textContent = `촬영 위치 · 주변 상점 ${Math.min((stores || []).length, 10)}곳`;
+}
 
 function withVersion(path) {
   const sep = path.includes("?") ? "&" : "?";
@@ -169,11 +239,10 @@ function extractCameraModelFromArrayBuffer(buffer) {
     const ifd0Abs = tiffStart + ifd0Offset;
     const ifd0Count = dv.getUint16(ifd0Abs, isLittleEndian);
 
-    // IFD0에서 Model 태그(0x0110) 탐색
     for (let i = 0; i < ifd0Count; i++) {
       const e = ifd0Abs + 2 + i * 12;
       const tag = dv.getUint16(e, isLittleEndian);
-      if (tag === 0x0110) { // Model tag
+      if (tag === 0x0110) {
         const format = dv.getUint16(e + 2, isLittleEndian);
         const components = dv.getUint32(e + 4, isLittleEndian);
         if (format === 2) {
@@ -185,7 +254,7 @@ function extractCameraModelFromArrayBuffer(buffer) {
           else if (modelLower.includes('gopro') || modelLower.includes('dji') || modelLower.includes('action')) cameraKey = 'action';
           else if (modelLower.includes('cctv') || modelLower.includes('hikvision')) cameraKey = 'cctv';
         }
-      } else if (tag === 0x8769) { // ExifIFDPointer
+      } else if (tag === 0x8769) {
         exifIfdOffset = dv.getUint32(e + 8, isLittleEndian);
       }
     }
@@ -198,22 +267,17 @@ function extractCameraModelFromArrayBuffer(buffer) {
         const tag = dv.getUint16(e, isLittleEndian);
         const format = dv.getUint16(e + 2, isLittleEndian);
         const components = dv.getUint32(e + 4, isLittleEndian);
-        if (tag === 0x8827) { // ISO SpeedRatings
+        if (tag === 0x8827) {
           const value = readEntryValue(e, format, components);
           if (Number.isFinite(Number(value))) iso = Number(value);
-        } else if (tag === 0x829A) { // ExposureTime
+        } else if (tag === 0x829A) {
           const value = readEntryValue(e, format, components);
           if (Number.isFinite(Number(value))) exposureMs = Math.max(1, Math.round(Number(value) * 1000));
         }
       }
     }
 
-    return {
-      model,
-      cameraKey,
-      iso,
-      exposureMs,
-    };
+    return { model, cameraKey, iso, exposureMs };
   } catch (e) {
     console.warn('카메라 모델 파싱 오류:', e);
     return null;
@@ -222,51 +286,39 @@ function extractCameraModelFromArrayBuffer(buffer) {
 
 /**
  * JPEG ArrayBuffer에서 EXIF GPS 좌표를 파싱합니다.
- * canvas 압축 후 EXIF가 제거되기 때문에, 압축 전 원본 버퍼에서 미리 추출합니다.
- * @returns {{lat: number, lon: number}|null}
+ * canvas 압축 후 EXIF가 제거되므로 압축 전 원본 버퍼에서 추출합니다.
  */
 function extractGpsFromArrayBuffer(buffer) {
   try {
     const dv = new DataView(buffer);
-    // JPEG 시그니처 확인
     if (dv.getUint16(0, false) !== 0xFFD8) return null;
 
     let offset = 2;
     let tiffStart = -1;
     let isLittleEndian = false;
-
-    // APP1 마커(0xFFE1)에서 EXIF 탐색
     while (offset + 4 <= dv.byteLength) {
       if (dv.getUint8(offset) !== 0xFF) break;
       const marker = dv.getUint8(offset + 1);
-      const segLen = dv.getUint16(offset + 2, false); // 빅 엔디안으로 먼저 읽기
-      if (marker === 0xE1 && offset + 10 <= dv.byteLength) {
-        // "Exif\0\0" 확인
-        if (dv.getUint8(offset+4)===0x45 && dv.getUint8(offset+5)===0x78 &&
-            dv.getUint8(offset+6)===0x69 && dv.getUint8(offset+7)===0x66) {
-          tiffStart = offset + 10;
-          break;
-        }
+      const segLen = dv.getUint16(offset + 2, false);
+      if (marker === 0xE1 && offset + 10 <= dv.byteLength &&
+          dv.getUint8(offset + 4) === 0x45 && dv.getUint8(offset + 5) === 0x78 &&
+          dv.getUint8(offset + 6) === 0x69 && dv.getUint8(offset + 7) === 0x66) {
+        tiffStart = offset + 10;
+        break;
       }
       offset += 2 + segLen;
     }
     if (tiffStart < 0) return null;
 
-    // TIFF 헤더에서 바이트 오더 확인
     const byteOrder = dv.getUint16(tiffStart, false);
-    isLittleEndian = (byteOrder === 0x4949); // 'II' = little endian, 'MM' = big endian
-
-    // IFD0 오프셋
+    isLittleEndian = byteOrder === 0x4949;
     const ifd0Offset = dv.getUint32(tiffStart + 4, isLittleEndian);
     const ifd0Abs = tiffStart + ifd0Offset;
     const ifd0Count = dv.getUint16(ifd0Abs, isLittleEndian);
-
-    // IFD0에서 GPS IFD 오프셋(tag 0x8825) 탐색
     let gpsIfdOffset = -1;
     for (let i = 0; i < ifd0Count; i++) {
       const e = ifd0Abs + 2 + i * 12;
-      const tag = dv.getUint16(e, isLittleEndian);
-      if (tag === 0x8825) { // GPSInfo
+      if (dv.getUint16(e, isLittleEndian) === 0x8825) {
         gpsIfdOffset = dv.getUint32(e + 8, isLittleEndian);
         break;
       }
@@ -275,20 +327,12 @@ function extractGpsFromArrayBuffer(buffer) {
 
     const gpsAbs = tiffStart + gpsIfdOffset;
     const gpsCount = dv.getUint16(gpsAbs, isLittleEndian);
-
-    function readRational(offset) {
-      const num = dv.getUint32(offset, isLittleEndian);
-      const den = dv.getUint32(offset + 4, isLittleEndian);
+    const readRational = (valueOffset) => {
+      const num = dv.getUint32(valueOffset, isLittleEndian);
+      const den = dv.getUint32(valueOffset + 4, isLittleEndian);
       return den === 0 ? 0 : num / den;
-    }
-
-    function readDegrees(offset) {
-      const d = readRational(offset);
-      const m = readRational(offset + 8);
-      const s = readRational(offset + 16);
-      return d + m / 60 + s / 3600;
-    }
-
+    };
+    const readDegrees = (valueOffset) => readRational(valueOffset) + readRational(valueOffset + 8) / 60 + readRational(valueOffset + 16) / 3600;
     let latRef = null, lonRef = null, lat = null, lon = null;
     for (let i = 0; i < gpsCount; i++) {
       const e = gpsAbs + 2 + i * 12;
@@ -296,18 +340,11 @@ function extractGpsFromArrayBuffer(buffer) {
       const format = dv.getUint16(e + 2, isLittleEndian);
       const components = dv.getUint32(e + 4, isLittleEndian);
       const valueOffset = dv.getUint32(e + 8, isLittleEndian);
-
-      if (tag === 0x0001 && format === 2) { // GPSLatitudeRef
-        latRef = String.fromCharCode(dv.getUint8(tiffStart + valueOffset));
-      } else if (tag === 0x0002 && format === 5 && components === 3) { // GPSLatitude
-        lat = readDegrees(tiffStart + valueOffset);
-      } else if (tag === 0x0003 && format === 2) { // GPSLongitudeRef
-        lonRef = String.fromCharCode(dv.getUint8(tiffStart + valueOffset));
-      } else if (tag === 0x0004 && format === 5 && components === 3) { // GPSLongitude
-        lon = readDegrees(tiffStart + valueOffset);
-      }
+      if (tag === 0x0001 && format === 2) latRef = String.fromCharCode(dv.getUint8(tiffStart + valueOffset));
+      else if (tag === 0x0002 && format === 5 && components === 3) lat = readDegrees(tiffStart + valueOffset);
+      else if (tag === 0x0003 && format === 2) lonRef = String.fromCharCode(dv.getUint8(tiffStart + valueOffset));
+      else if (tag === 0x0004 && format === 5 && components === 3) lon = readDegrees(tiffStart + valueOffset);
     }
-
     if (lat === null || lon === null) return null;
     if (latRef === 'S') lat = -lat;
     if (lonRef === 'W') lon = -lon;
@@ -537,18 +574,44 @@ async function callApiAnalyze(imageData, captureSettings = {}) {
       } catch (e) { /* 파싱 실패 시 무시 */ }
     }
     
-    const response = await fetch("/api/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 60000);
+    let response;
+    try {
+      response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
     if (!response.ok) throw new Error(`API error ${response.status}`);
     const result = await response.json();
     if (result.status !== "success") throw new Error(result.message || "API 분석 실패");
     return result;
   } catch (err) {
-    console.warn("API 분석 실패, 로컬 대체 실행", err);
-    return simulateApiAnalysis(imageData);
+    const reason = err?.name === "AbortError" ? "서버 응답 시간 초과" : "API 분석 실패";
+    console.warn(`${reason}; 임의의 분석 결과를 만들지 않습니다.`, err);
+    return {
+      status: "success",
+      analysisUnavailable: true,
+      overall: "분석 불가",
+      totalFineAmount: 0,
+      violationCount: 0,
+      detected: [],
+      riskSummary: "서버 분석을 완료하지 못했습니다. 잠시 후 다시 시도해주세요.",
+      zone: "제3종",
+      zoneLabel: "주거지역",
+      gpsDetected: false,
+      allZonesMode: false,
+      zonesSummary: {},
+      overallPollutionCategory: "분석 불가",
+      pollutionCategorySummary: { overall: "분석 불가", counts: {} },
+      signboardSummary: {},
+      model: "분석 서버 응답 없음",
+    };
   }
 }
 
@@ -556,8 +619,10 @@ async function resolveImageDataForApi(imageRef) {
   if (!imageRef) return null;
   if (String(imageRef).startsWith("data:image")) return imageRef;
   // URL인 경우 fetch 후 base64로 변환
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch(imageRef);
+    const response = await fetch(imageRef, { signal: controller.signal });
     if (!response.ok) throw new Error(`image fetch failed: ${response.status}`);
     const blob = await response.blob();
     return await new Promise((resolve, reject) => {
@@ -569,6 +634,8 @@ async function resolveImageDataForApi(imageRef) {
   } catch (err) {
     console.warn("이미지 URL을 data URL로 변환 실패 — 분석 불가", err);
     return null; // null 반환 → callApiAnalyze에서 바로 에러 처리
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
@@ -757,6 +824,7 @@ function setupBusanCommercialLookup(rawGps, ocrStoreNames = []) {
       const within10m = groups.within10m || [];
       const within30m = groups.within30m || [];
       const nearestStores = data.nearestStores || [];
+      updateResultMapStores(nearestStores);
       const matchPool = [...within5m, ...within10m, ...within30m, ...nearestStores]
         .filter((store, index, stores) => stores.findIndex((candidate) =>
           candidate.name === store.name && candidate.address === store.address
@@ -793,25 +861,6 @@ function setupBusanCommercialLookup(rawGps, ocrStoreNames = []) {
       lookupBtn.disabled = false;
       lookupBtn.textContent = "주변 상점 조회";
     }
-  });
-}
-
-function simulateApiAnalysis(imageData) {
-  return analyzeLightImage(imageData).then((analysis) => {
-    // API 호출 실패 시 로컬 fallback — 과태료 산출 불가(서버 필요)하므로 미탐지로 반환
-    return {
-      status: "success",
-      overall: "미탐지",
-      totalFineAmount: 0,
-      violationCount: 0,
-      detected: [],
-      riskSummary: "서버 연결 실패 — 과태료 판정 불가 (백엔드 서버를 실행해주세요)",
-      zone: "제3종",
-      zoneLabel: "주거지역",
-      gpsDetected: false,
-      avgBrightness: analysis.avgBrightness,
-      model: "로컬 폴백 (서버 미연결)"
-    };
   });
 }
 
@@ -1002,7 +1051,7 @@ function showImagePreview(compressedImageDataUrl, captureSettings, fileName) {
 function analysisPageInit() {
   syncFooterContact();
   const { data, file, size, time } = readSessionImage();
-  ["light_detected", "light_overall", "light_totalFine", "light_violationCount", "light_riskSummary", "light_modelStatus", "light_zone", "light_zoneLabel", "light_gpsDetected", "light_allZonesMode", "light_zonesSummary", "light_pollutionOverall", "light_pollutionSummary"].forEach((k) => sessionStorage.removeItem(k));
+  ["light_detected", "light_overall", "light_totalFine", "light_violationCount", "light_riskSummary", "light_modelStatus", "light_zone", "light_zoneLabel", "light_gpsDetected", "light_allZonesMode", "light_zonesSummary", "light_pollutionOverall", "light_pollutionSummary", "light_signboardSummary", "light_analysisUnavailable"].forEach((k) => sessionStorage.removeItem(k));
   const imageEl = document.getElementById("analysisImage");
   const fileNameEl = document.getElementById("fileName");
   const uploadTimeEl = document.getElementById("uploadTime");
@@ -1058,7 +1107,7 @@ function analysisPageInit() {
   const interval = setInterval(() => {
     if (currentIndex >= steps.length - 1) {
       clearInterval(interval);
-      if (statusText) statusText.textContent = "AI 분석이 완료되었습니다. 결과 페이지로 이동합니다.";
+      if (statusText) statusText.textContent = "분석 결과를 정리하는 중입니다...";
       resolveImageDataForApi(data).then((apiInput) => callApiAnalyze(apiInput, capture)).then((apiResult) => {
         const objectNames = apiResult.detected.map((o) => {
           const unit = o.unit || (o.type === "가로등" ? "lux" : "cd/m²");
@@ -1083,11 +1132,14 @@ function analysisPageInit() {
         sessionStorage.setItem("light_zonesSummary", JSON.stringify(apiResult.zonesSummary || {}));
         sessionStorage.setItem("light_pollutionOverall", apiResult.overallPollutionCategory || "미탐지");
         sessionStorage.setItem("light_pollutionSummary", JSON.stringify(apiResult.pollutionCategorySummary || {}));
+        sessionStorage.setItem("light_signboardSummary", JSON.stringify(apiResult.signboardSummary || {}));
+        sessionStorage.setItem("light_analysisUnavailable", apiResult.analysisUnavailable ? "true" : "false");
         if (apiResult.captureContext) {
           sessionStorage.setItem("light_captureSummary", `${apiResult.captureContext.cameraLabel} · ISO ${apiResult.captureContext.iso} · ${apiResult.captureContext.exposureMs}ms · ${apiResult.captureContext.angleDeg}°`);
         }
       }).catch((err) => {
         console.error("분석 결과 저장 실패", err);
+        if (statusText) statusText.textContent = "일부 결과를 정리하지 못했습니다. 결과 페이지로 이동합니다.";
       }).finally(() => {
         setTimeout(() => { window.location.href = withVersion("/result"); }, 250);
       });
@@ -1128,6 +1180,7 @@ function resultPageInit() {
   const modelStatus = sessionStorage.getItem("light_modelStatus") || "모델 정보 없음";
   if (modelStatusEl) modelStatusEl.textContent = modelStatus;
   const overall = sessionStorage.getItem("light_overall") || "미탐지";
+  const analysisUnavailable = sessionStorage.getItem("light_analysisUnavailable") === "true";
   const totalFine = Number(sessionStorage.getItem("light_totalFine") || "0");
   const violationCount = Number(sessionStorage.getItem("light_violationCount") || "0");
   const riskSum = sessionStorage.getItem("light_riskSummary") || "-";
@@ -1138,11 +1191,14 @@ function resultPageInit() {
   const zonesSummary = JSON.parse(sessionStorage.getItem("light_zonesSummary") || "{}");
   const pollutionOverall = sessionStorage.getItem("light_pollutionOverall") || "미탐지";
   const pollutionSummary = JSON.parse(sessionStorage.getItem("light_pollutionSummary") || "{}");
+  const signboardSummary = JSON.parse(sessionStorage.getItem("light_signboardSummary") || "{}");
   const captureSummary = sessionStorage.getItem("light_captureSummary") || "-";
   const rawGps = getStoredGps();
   const gpsText = rawGps && typeof rawGps.lat === "number" && typeof rawGps.lon === "number"
     ? `${rawGps.lat.toFixed(6)}, ${rawGps.lon.toFixed(6)}`
     : (gpsDetected ? `${zone} (${zoneLabel})` : "미확인");
+
+  initializeResultMap(rawGps, detected, signboardSummary);
 
   function buildReportPayload() {
     return {
@@ -1162,6 +1218,7 @@ function resultPageInit() {
       zonesSummary,
       pollutionOverall,
       pollutionSummary,
+      signboardSummary,
       detected,
       rawGps,
       gpsText,
@@ -1204,8 +1261,9 @@ function resultPageInit() {
       `촬영 조건: ${payload.captureSummary || "-"}`,
       `총 과태료: ${payload.totalFineAmount}만원`,
       `위반 건수: ${payload.violationCount}건`,
-      `모델 상태: ${payload.modelStatus}`,
-      `위험 요약: ${payload.riskSummary}`,
+      `점주 안내: ${payload.totalFineAmount > 0 ? "기준 초과가 의심되는 조명이 있어 현장 측정을 권장합니다." : "사진 기준으로 큰 초과가 확인되지 않았습니다."}`,
+      `간판 평균 밝기: ${payload.signboardSummary?.averageBrightness ?? "-"} / ${payload.signboardSummary?.averageLuminanceCdM2 ?? "-"} cd/m²`,
+      `간판 안정 보정 기준: ${payload.signboardSummary?.baseline || "-"}`,
       `유형별 집계: ${pollutionCountsText}`,
       `탐지 객체:`,
       detectedText || "-",
@@ -1254,10 +1312,14 @@ function resultPageInit() {
     }
   }
 
-  if (summaryOverall) summaryOverall.textContent = allZonesMode ? "종합 판정: GPS 미확인" : `종합 판정: ${overall}`;
+  if (summaryOverall) summaryOverall.textContent = analysisUnavailable
+    ? "종합 판정: 분석 불가"
+    : allZonesMode ? "종합 판정: GPS 미확인" : `종합 판정: ${overall}`;
   if (summaryBadge) {
-    summaryBadge.textContent = overall === "미탐지" ? "미탐지" : totalFine > 0 ? `과태료 ${totalFine}만원` : "법규 준수";
-    summaryBadge.className = "badge " + (totalFine > 0 ? "badge-danger" : "badge-safe");
+    summaryBadge.textContent = analysisUnavailable
+      ? "서버 분석 필요"
+      : overall === "미탐지" ? "미탐지" : totalFine > 0 ? `과태료 ${totalFine}만원` : "법규 준수";
+    summaryBadge.className = "badge " + (analysisUnavailable ? "badge-warning" : totalFine > 0 ? "badge-danger" : "badge-safe");
   }
   if (summaryViolation) summaryViolation.textContent = totalFine > 0 ? `${totalFine}만원` : "없음";
   if (summaryConfidence) summaryConfidence.textContent = `${violationCount}건`;
@@ -1275,6 +1337,9 @@ function resultPageInit() {
   if (resultCaptureEl) resultCaptureEl.textContent = captureSummary;
 
   const summaryDetectedCount = document.getElementById("summaryDetectedCount");
+  const summarySignboardAverage = document.getElementById("summarySignboardAverage");
+  const summaryStableBrightness = document.getElementById("summaryStableBrightness");
+  const signboardComparisonNote = document.getElementById("signboardComparisonNote");
   const summaryViolationCount = document.getElementById("summaryViolationCount");
   const summaryMaxBright = document.getElementById("summaryMaxBright");
   const summaryRiskLevel = document.getElementById("summaryRiskLevel");
@@ -1289,6 +1354,21 @@ function resultPageInit() {
   const maxStage = violationItems.find((d) => d.violationStage === "3단계") || violationItems.find((d) => d.violationStage === "2단계") || violationItems.find((d) => d.violationStage === "1단계");
 
   if (summaryDetectedCount) summaryDetectedCount.textContent = `${detected.length}개`;
+  if (summarySignboardAverage) {
+    summarySignboardAverage.textContent = signboardSummary.count
+      ? `${Math.round(signboardSummary.averageBrightness)} / ${Math.round(signboardSummary.averageLuminanceCdM2)} cd/m²`
+      : "간판 없음";
+  }
+  if (summaryStableBrightness) {
+    const stableItem = detected.filter((item) => item.type === "간판")
+      .reduce((best, item) => (Number(item.stableBrightness || 0) > Number(best?.stableBrightness || 0) ? item : best), null);
+    summaryStableBrightness.textContent = stableItem
+      ? `${Math.round(stableItem.stableBrightness)} (${Math.round(stableItem.stableLuminanceCdM2 || 0)} cd/m²)`
+      : "간판 없음";
+  }
+  if (signboardComparisonNote && signboardSummary.count) {
+    signboardComparisonNote.textContent = `${signboardSummary.baseline || "동일 장면 기준"} · 최고값 편차 ${signboardSummary.outlierDeviationPercent ?? 0}%`;
+  }
   if (summaryViolationCount) summaryViolationCount.textContent = `${violationItems.length}개`;
   if (summaryMaxBright) summaryMaxBright.textContent = maxFineObject ? `${maxFineObject.name}` : "-";
   if (summaryRiskLevel) summaryRiskLevel.textContent = totalFine > 0 ? `${totalFine}만원` : "없음";
@@ -1387,6 +1467,7 @@ function resultPageInit() {
         ${storeInfo}${ocrInfo}
         빛 공해 분류: <b>${item.pollutionCategory || "미분류"}</b> <small>${item.pollutionCategoryDesc || ""}</small><br/>
         측정값(참고용 추정): <b>${Math.round(measured)} ${lawUnit}</b><br/>
+        ${isSignboard ? `안정 보정 밝기: <b>${Math.round(item.stableBrightness ?? item.brightness ?? 0)} / 255</b> (95백분위)<br/>` : ""}
         ROI 밝기 평균/95%: ${Math.round(item.brightness ?? 0)} / ${Math.round(item.brightnessP95 ?? item.brightness ?? 0)}<br/>
         밝은 픽셀 비율: ${Number(item.brightPixelRatio ?? 0).toFixed(1)}%<br/>
         기준치: ${item.threshold ?? "-"} ${lawUnit} <small>(${item.basis || "-"})</small><br/>
