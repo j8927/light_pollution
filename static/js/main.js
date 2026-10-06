@@ -64,7 +64,7 @@ function initializeResultMap(rawGps, detected, signboardSummary = {}) {
   const markerLayer = window.L.layerGroup().addTo(map);
   const signNames = [...new Set((detected || [])
     .filter((item) => item.type === "간판")
-    .map((item) => item.storeName || item.name)
+    .map((item) => item.storeName || getDisplayObjectName(item))
     .filter(Boolean))];
   const averageLuminance = Number(signboardSummary.averageLuminanceCdM2);
   const medianBrightness = Number(signboardSummary.medianBrightness);
@@ -648,6 +648,43 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function getDisplayObjectName(item) {
+  const type = String(item?.type || "").trim();
+  if (["간판", "조명", "가로등", "구조물", "사람", "차량"].includes(type)) return type;
+  const rawName = String(item?.name || "").trim();
+  const aliases = {
+    light_signboard: "간판",
+    "street sign": "간판",
+    "stop sign": "간판",
+    lighting: "조명",
+    streetlight: "가로등",
+    "traffic light": "가로등",
+  };
+  return aliases[rawName] || type || "탐지 객체";
+}
+
+function getPublicModelStatus(rawStatus) {
+  const status = String(rawStatus || "");
+  if (/실패|오류|사용할 수 없|서버.*(연결|응답)|응답 없음/i.test(status)) return "AI 모델을 사용할 수 없습니다";
+  return "AI 모델 정상 작동";
+}
+
+function getRiskPresentation(item) {
+  if (item?.violationStage === "3단계") {
+    return { label: "위험", css: "risk-danger", box: "box-high", popup: "popup-high" };
+  }
+  if (item?.violationStage) {
+    return { label: "주의", css: "risk-warning", box: "box-medium", popup: "popup-medium" };
+  }
+  return { label: "정상", css: "risk-safe", box: "box-safe", popup: "popup-safe" };
+}
+
+function getCorrectionGuidance(item) {
+  return item?.compliance === "위반"
+    ? "기준 초과 추정 → 시정명령 대상 가능성 높음"
+    : "기준 이내 추정";
+}
+
 function getStoredGps() {
   const value = sessionStorage.getItem("light_rawGps");
   if (!value) return null;
@@ -1112,7 +1149,7 @@ function analysisPageInit() {
         const objectNames = apiResult.detected.map((o) => {
           const unit = o.unit || (o.type === "가로등" ? "lux" : "cd/m²");
           const measured = o.measuredValue ?? (unit === "lux" ? o.illuminanceLux : o.luminanceCdM2) ?? o.brightness;
-          const displayName = o.type === "간판" && o.storeName ? o.storeName : o.name;
+          const displayName = o.type === "간판" && o.storeName ? o.storeName : getDisplayObjectName(o);
           return `${displayName}(${Math.round(measured)} ${unit}, 추정)`;
         }).join(", ");
         const detectedObjectsEl = document.getElementById("detectedObjects");
@@ -1124,7 +1161,7 @@ function analysisPageInit() {
         sessionStorage.setItem("light_totalFine", apiResult.totalFineAmount ?? 0);
         sessionStorage.setItem("light_violationCount", apiResult.violationCount ?? 0);
         sessionStorage.setItem("light_riskSummary", apiResult.riskSummary);
-        sessionStorage.setItem("light_modelStatus", apiResult.model || "모델 상태 없음");
+        sessionStorage.setItem("light_modelStatus", getPublicModelStatus(apiResult.model));
         sessionStorage.setItem("light_zone", apiResult.zone || "제3종");
         sessionStorage.setItem("light_zoneLabel", apiResult.zoneLabel || "주거지역");
         sessionStorage.setItem("light_gpsDetected", apiResult.gpsDetected ? "true" : "false");
@@ -1177,7 +1214,7 @@ function resultPageInit() {
     .map((item) => item.storeName?.trim())
     .filter(Boolean))];
   const signboardCount = detected.filter((item) => item.type === "간판" || item.name === "light_signboard" || item.name === "street sign").length;
-  const modelStatus = sessionStorage.getItem("light_modelStatus") || "모델 정보 없음";
+  const modelStatus = getPublicModelStatus(sessionStorage.getItem("light_modelStatus"));
   if (modelStatusEl) modelStatusEl.textContent = modelStatus;
   const overall = sessionStorage.getItem("light_overall") || "미탐지";
   const analysisUnavailable = sessionStorage.getItem("light_analysisUnavailable") === "true";
@@ -1240,16 +1277,18 @@ function resultPageInit() {
       ? `침입광 ${payload.pollutionSummary.counts["침입광"] || 0}건, 눈부심 ${payload.pollutionSummary.counts["눈부심"] || 0}건, 산란광 ${payload.pollutionSummary.counts["산란광"] || 0}건, 군집된빛 ${payload.pollutionSummary.counts["군집된빛"] || 0}건`
       : "-";
     const detectedText = (payload.detected || []).map((item) => {
-      const stageText = item.violationStage || "준수";
-      const fineText = item.fineAmount > 0 ? `${item.fineAmount}만원` : "없음";
+      const stageText = getRiskPresentation(item).label;
+      const actionText = item.compliance === "위반"
+        ? "시정명령 대상 가능성 높음 (미이행 시 과태료 최대 100만원)"
+        : "기준 이내 추정";
       const measuredValue = item.measuredValue ?? item.illuminanceLux ?? item.luminanceCdM2 ?? item.brightness ?? "-";
       const unit = item.unit || (item.type === "가로등" ? "lux" : "cd/m²");
       const storeText = item.type === "간판" && item.storeName ? ` / 상호명: ${item.storeName}` : "";
       const ocrText = item.type === "간판" && item.ocrText ? ` / OCR: ${item.ocrText}` : "";
-      return `${item.name || "-"}${storeText}${ocrText} / ${item.type || "-"} / ${item.pollutionCategory || "미분류"} / ${measuredValue}${typeof measuredValue === "number" ? ` ${unit}` : ""} / ${stageText} / ${fineText}`;
+      return `${getDisplayObjectName(item)}${storeText}${ocrText} / ${item.pollutionCategory || "미분류"} / ${measuredValue}${typeof measuredValue === "number" ? ` ${unit}` : ""} / ${stageText} / ${actionText}`;
     }).join("\n");
     return [
-      "빛 공해 법규 위반 탐지 리포트",
+      "빛 공해 기준 비교 참고 리포트",
       `파일: ${payload.fileName}`,
       `파일 크기: ${payload.fileSize}`,
       `분석 시간: ${payload.analysisTime}`,
@@ -1259,8 +1298,8 @@ function resultPageInit() {
       `조명환경관리구역: ${payload.zone} (${payload.zoneLabel})`,
       `GPS: ${payload.gpsText}`,
       `촬영 조건: ${payload.captureSummary || "-"}`,
-      `총 과태료: ${payload.totalFineAmount}만원`,
-      `위반 건수: ${payload.violationCount}건`,
+      `시정명령 대상 가능성: ${payload.violationCount > 0 ? "높음" : "낮음"}`,
+      `기준 초과 추정 객체: ${payload.violationCount}건`,
       `점주 안내: ${payload.totalFineAmount > 0 ? "기준 초과가 의심되는 조명이 있어 현장 측정을 권장합니다." : "사진 기준으로 큰 초과가 확인되지 않았습니다."}`,
       `간판 평균 밝기: ${payload.signboardSummary?.averageBrightness ?? "-"} / ${payload.signboardSummary?.averageLuminanceCdM2 ?? "-"} cd/m²`,
       `간판 안정 보정 기준: ${payload.signboardSummary?.baseline || "-"}`,
@@ -1314,17 +1353,17 @@ function resultPageInit() {
 
   if (summaryOverall) summaryOverall.textContent = analysisUnavailable
     ? "종합 판정: 분석 불가"
-    : allZonesMode ? "종합 판정: GPS 미확인" : `종합 판정: ${overall}`;
+    : allZonesMode ? "종합 판정: GPS 미확인" : `종합 판정: ${violationCount > 0 ? "기준 초과 추정" : overall === "미탐지" ? "미탐지" : "기준 이내 추정"}`;
   if (summaryBadge) {
     summaryBadge.textContent = analysisUnavailable
       ? "서버 분석 필요"
-      : overall === "미탐지" ? "미탐지" : totalFine > 0 ? `과태료 ${totalFine}만원` : "법규 준수";
-    summaryBadge.className = "badge " + (analysisUnavailable ? "badge-warning" : totalFine > 0 ? "badge-danger" : "badge-safe");
+      : overall === "미탐지" ? "미탐지" : violationCount > 0 ? "기준 초과 추정 → 시정명령 대상 가능성 높음" : "기준 이내 추정";
+    summaryBadge.className = "badge " + (analysisUnavailable ? "badge-warning" : violationCount > 0 ? "badge-danger" : "badge-safe");
   }
-  if (summaryViolation) summaryViolation.textContent = totalFine > 0 ? `${totalFine}만원` : "없음";
+  if (summaryViolation) summaryViolation.textContent = violationCount > 0 ? "높음" : "낮음";
   if (summaryConfidence) summaryConfidence.textContent = `${violationCount}건`;
   if (resultDetected) {
-    resultDetected.textContent = detected.map((d) => `${d.type === "간판" && d.storeName ? d.storeName : d.name}(${d.pollutionCategory || "미분류"}/${d.violationStage || '준수'})`).join(", ") || "탐지된 객체 없음";
+    resultDetected.textContent = detected.map((d) => `${getDisplayObjectName(d)}(${d.pollutionCategory || "미분류"}/${getRiskPresentation(d).label})`).join(", ") || "탐지된 객체 없음";
   }
   const summaryStoreNames = document.getElementById("summaryStoreNames");
   if (summaryStoreNames) {
@@ -1370,13 +1409,45 @@ function resultPageInit() {
     signboardComparisonNote.textContent = `${signboardSummary.baseline || "동일 장면 기준"} · 최고값 편차 ${signboardSummary.outlierDeviationPercent ?? 0}%`;
   }
   if (summaryViolationCount) summaryViolationCount.textContent = `${violationItems.length}개`;
-  if (summaryMaxBright) summaryMaxBright.textContent = maxFineObject ? `${maxFineObject.name}` : "-";
-  if (summaryRiskLevel) summaryRiskLevel.textContent = totalFine > 0 ? `${totalFine}만원` : "없음";
+  if (summaryMaxBright) summaryMaxBright.textContent = maxFineObject ? getDisplayObjectName(maxFineObject) : "-";
+  if (summaryRiskLevel) summaryRiskLevel.textContent = violationItems.length > 0 ? "높음" : "낮음";
   if (detailDetectedCount) detailDetectedCount.textContent = `${detected.length}개`;
   if (detailBrightCount) detailBrightCount.textContent = `${violationItems.length}개`;
-  if (detailTopObject) detailTopObject.textContent = maxFineObject ? `${maxFineObject.name}` : "-";
-  if (detailRiskLevel) detailRiskLevel.textContent = totalFine > 0 ? `${totalFine}만원` : "없음";
-  if (detailConfidence) detailConfidence.textContent = maxStage ? maxStage.violationStage : "없음";
+  if (detailTopObject) detailTopObject.textContent = maxFineObject ? getDisplayObjectName(maxFineObject) : "-";
+  if (detailRiskLevel) detailRiskLevel.textContent = violationItems.length > 0 ? "높음" : "낮음";
+  if (detailConfidence) detailConfidence.textContent = maxStage ? getRiskPresentation(maxStage).label : "정상";
+
+  const objectResultsTableBody = document.getElementById("objectResultsTableBody");
+  if (objectResultsTableBody) {
+    objectResultsTableBody.innerHTML = detected.length ? detected.map((item, index) => {
+      const risk = getRiskPresentation(item);
+      const unit = item.unit || (item.type === "가로등" ? "lux" : "cd/m²");
+      const measured = item.measuredValue ?? (unit === "lux" ? item.illuminanceLux : item.luminanceCdM2) ?? item.brightness;
+      const measuredText = Number.isFinite(Number(measured)) ? `${Math.round(Number(measured))} ${unit}` : "-";
+      const thresholdText = item.threshold != null ? `${item.threshold} ${unit}` : "-";
+      const storeText = item.type === "간판" && item.storeName
+        ? `<br/><small>상호명: ${escapeHtml(item.storeName)}</small>`
+        : "";
+      const actionNote = item.compliance === "위반"
+        ? '<br/><small>참고: 미이행 시 과태료 최대 100만원</small>'
+        : "";
+      return `<tr data-object-index="${index}">
+        <td><span class="object-number ${risk.css}">${index + 1}</span></td>
+        <td><strong>${escapeHtml(getDisplayObjectName(item))}</strong>${storeText}</td>
+        <td><span class="risk-label ${risk.css}">${risk.label}</span></td>
+        <td>${escapeHtml(measuredText)}</td>
+        <td>${escapeHtml(thresholdText)}</td>
+        <td class="object-action">${escapeHtml(getCorrectionGuidance(item))}${actionNote}</td>
+      </tr>`;
+    }).join("") : '<tr><td colspan="6" class="object-empty">탐지 결과가 없습니다.</td></tr>';
+
+    objectResultsTableBody.querySelectorAll("tr[data-object-index]").forEach((row) => {
+      row.addEventListener("click", () => {
+        const box = document.querySelector(`.overlay[data-object-index="${row.dataset.objectIndex}"]`);
+        if (box) box.click();
+      });
+    });
+  }
 
   const zoneText = allZonesMode ? "GPS 미확인 — 구역별 시뮬레이션" : `${zone} (${zoneLabel})${gpsDetected ? " · GPS 자동판별" : ""}`;
   const resultZoneEl = document.getElementById("resultZone");
@@ -1397,18 +1468,18 @@ function resultPageInit() {
           <td style="padding:8px 10px;border:1px solid #e5e7ef;">${zc}<br/><small style="color:#999;font-weight:normal;">${s.zoneLabel || ""}</small></td>
           <td style="padding:8px 10px;border:1px solid #e5e7ef;color:${color};font-weight:600;">${s.overall || "-"}</td>
           <td style="padding:8px 10px;border:1px solid #e5e7ef;">${s.violationCount || 0}건</td>
-          <td style="padding:8px 10px;border:1px solid #e5e7ef;font-weight:600;">${(s.totalFineAmount || 0) > 0 ? s.totalFineAmount + "만원" : "없음"}</td>
+          <td style="padding:8px 10px;border:1px solid #e5e7ef;font-weight:600;">${(s.violationCount || 0) > 0 ? "높음" : "낮음"}</td>
         </tr>`;
       }).join("");
       allZonesSection.innerHTML = `
-        <div class="card-head"><h3>📍 GPS 미확인 — 구역별 과태료 시뮬레이션</h3></div>
-        <p style="font-size:.85rem;color:#666;margin:0 0 12px;">EXIF GPS 정보가 없어 구역을 특정할 수 없습니다. 촬영 위치가 각 구역일 경우의 예상 과태료입니다.</p>
+        <div class="card-head"><h3>📍 GPS 미확인 — 구역별 기준 초과 추정</h3></div>
+        <p style="font-size:.85rem;color:#666;margin:0 0 12px;">EXIF GPS 정보가 없어 구역을 특정할 수 없습니다. 촬영 위치가 각 구역일 경우의 시정명령 대상 가능성을 비교합니다.</p>
         <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
           <tr style="background:#f9f9f9;">
             <th style="text-align:left;padding:8px 10px;border:1px solid #e5e7ef;">구역</th>
-            <th style="text-align:left;padding:8px 10px;border:1px solid #e5e7ef;">위반 단계</th>
-            <th style="text-align:left;padding:8px 10px;border:1px solid #e5e7ef;">위반 건수</th>
-            <th style="text-align:left;padding:8px 10px;border:1px solid #e5e7ef;">총 과태료</th>
+            <th style="text-align:left;padding:8px 10px;border:1px solid #e5e7ef;">위험 단계</th>
+            <th style="text-align:left;padding:8px 10px;border:1px solid #e5e7ef;">기준 초과 추정 객체</th>
+            <th style="text-align:left;padding:8px 10px;border:1px solid #e5e7ef;">시정명령 대상 가능성</th>
           </tr>
           ${rows}
         </table>`;
@@ -1444,7 +1515,7 @@ function resultPageInit() {
       clickedSet.delete(id);
     }
 
-    function showPopup(item, box, popupClass, measured, lawUnit) {
+    function showPopup(item, objectNumber, box, popupClass, measured, lawUnit) {
       // 설명창은 한 번에 하나만 표시한다.
       popupLayer.replaceChildren();
       const id = ++popupIdCounter;
@@ -1453,8 +1524,10 @@ function resultPageInit() {
       popup.dataset.popupId = id;
       popup.style.pointerEvents = "all";
 
-      const fineText = item.fineAmount > 0 ? `<span style="color:#d63939;font-weight:700;">${item.fineAmount}만원</span>` : '<span style="color:#1f9d5d;">없음</span>';
       const isSignboard = item.type === "간판";
+      const correctionText = item.compliance === "위반"
+        ? '<b style="color:#d63939;">기준 초과 추정 → 시정명령 대상 가능성 높음</b><br/><small>참고: 미이행 시 과태료 최대 100만원</small>'
+        : '<b style="color:#1f9d5d;">기준 이내 추정</b>';
       const storeInfo = isSignboard && item.storeName
         ? `상호명: <b>${escapeHtml(item.storeName)}</b><br/>`
         : "";
@@ -1463,7 +1536,7 @@ function resultPageInit() {
         : "";
       popup.innerHTML = `
         <button class="popup-close" title="닫기">×</button>
-        <strong>${escapeHtml(isSignboard && item.storeName ? item.storeName : item.name)} (${escapeHtml(item.lightType || item.type)})</strong>
+        <strong>${objectNumber}번 · ${escapeHtml(getDisplayObjectName(item))} (${escapeHtml(item.lightType || item.type)})</strong>
         ${storeInfo}${ocrInfo}
         빛 공해 분류: <b>${item.pollutionCategory || "미분류"}</b> <small>${item.pollutionCategoryDesc || ""}</small><br/>
         측정값(참고용 추정): <b>${Math.round(measured)} ${lawUnit}</b><br/>
@@ -1471,8 +1544,7 @@ function resultPageInit() {
         ROI 밝기 평균/95%: ${Math.round(item.brightness ?? 0)} / ${Math.round(item.brightnessP95 ?? item.brightness ?? 0)}<br/>
         밝은 픽셀 비율: ${Number(item.brightPixelRatio ?? 0).toFixed(1)}%<br/>
         기준치: ${item.threshold ?? "-"} ${lawUnit} <small>(${item.basis || "-"})</small><br/>
-        준수 여부: <b>${item.compliance}</b>${item.violationStage ? " · " + item.violationStage : ""}<br/>
-        과태료: ${fineText}
+        판정 및 조치 안내: ${correctionText}
       `;
 
       popup.querySelector(".popup-close").addEventListener("click", (e) => {
@@ -1518,10 +1590,16 @@ function resultPageInit() {
       return id;
     }
 
-    detected.forEach((item) => {
+    detected.forEach((item, index) => {
+      const risk = getRiskPresentation(item);
       const box = document.createElement("div");
-      box.className = "overlay " + (item.violationStage === "3단계" ? "box-high" : item.violationStage ? "box-medium" : "box-safe");
-      const popupClass = item.violationStage === "3단계" ? "popup-high" : item.violationStage ? "popup-medium" : "popup-safe";
+      box.className = `overlay ${risk.box}`;
+      const popupClass = risk.popup;
+      box.dataset.objectIndex = index;
+      box.setAttribute("role", "button");
+      box.setAttribute("aria-label", `${index + 1}번 ${getDisplayObjectName(item)}, ${risk.label}`);
+      box.tabIndex = 0;
+      box.innerHTML = `<span class="overlay-number" aria-hidden="true">${index + 1}</span>`;
       box.style.top = `${item.box.y}%`;
       box.style.left = `${item.box.x}%`;
       box.style.width = `${item.box.width}%`;
@@ -1538,7 +1616,13 @@ function resultPageInit() {
           removePopup(activePopupId);
           activePopupId = null;
         } else {
-          activePopupId = showPopup(item, box, popupClass, measured, lawUnit);
+          activePopupId = showPopup(item, index + 1, box, popupClass, measured, lawUnit);
+        }
+      });
+      box.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          box.click();
         }
       });
 

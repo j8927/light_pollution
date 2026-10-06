@@ -46,20 +46,20 @@ def load_local_env(path='.env'):
 load_local_env()
 
 MODEL = None
-MODEL_STATUS = "모델 로드 중..."
+MODEL_STATUS = "AI 모델 준비 중"
 
 try:
     from ultralytics import YOLO
     custom_path = 'models/light_pollution_best.pt'
     if os.path.exists(custom_path):
         MODEL = YOLO(custom_path)
-        MODEL_STATUS = f"커스텀 모델 로드 완료({custom_path})"
+        MODEL_STATUS = "AI 모델 정상 작동"
     else:
         MODEL = YOLO('yolov8n.pt')
-        MODEL_STATUS = "YOLOv8 기본 모델 로드 완료"
-except Exception as e:
+        MODEL_STATUS = "AI 모델 정상 작동"
+except Exception:
     MODEL = None
-    MODEL_STATUS = f"모델 로드 실패: {e}"
+    MODEL_STATUS = "AI 모델을 사용할 수 없습니다"
 
 # ---- YOLO 탐지 클래스 매핑 ----
 COCO_TO_KR = {
@@ -886,7 +886,7 @@ def _build_pdf_report_bytes(report_data):
         rightMargin=16 * mm,
         topMargin=16 * mm,
         bottomMargin=16 * mm,
-        title='빛 공해 법규 위반 탐지 리포트',
+        title='빛 공해 기준 비교 참고 리포트',
         author='Light Pollution AI System',
     )
 
@@ -994,14 +994,14 @@ def _build_pdf_report_bytes(report_data):
 
     if overall == '미탐지':
         owner_result = '광원 대상이 확인되지 않았습니다. 다른 각도에서 다시 촬영해 보세요.'
-    elif total_fine > 0:
-        owner_result = f'기준 초과가 의심되는 조명 {violation_count}건이 확인되었습니다. 현장 측정을 권장합니다.'
+    elif violation_count > 0:
+        owner_result = f'기준 초과 추정 조명 {violation_count}건이 확인되어 시정명령 대상 가능성이 높습니다. 현장 측정을 권장합니다.'
     else:
         owner_result = '사진에서 확인된 조명은 입력한 구역 기준을 초과하지 않았습니다.'
 
     owner_action = (
         '밝기와 점등 방향을 먼저 확인하고, 최종 판단은 휘도계·조도계 현장 측정으로 확인하세요.'
-        if total_fine > 0 else
+        if violation_count > 0 else
         '현재 사진 기준으로는 큰 초과가 보이지 않지만, 촬영 조건에 따라 결과가 달라질 수 있습니다.'
     )
 
@@ -1009,8 +1009,8 @@ def _build_pdf_report_bytes(report_data):
         ['항목', '내용', '항목', '내용'],
         ['분석 대상', file_name, '분석 일시', analysis_time],
         ['종합 안내', owner_result, '확인된 조명', f'{len(detected)}건'],
-        ['현장 확인 권장', owner_action, '예상 과태료 수준', f'{total_fine}만원' if total_fine else '없음'],
-        ['빛 공해 유형', pollution_overall, '기준 초과 의심', f'{violation_count}건'],
+        ['현장 확인 권장', owner_action, '시정명령 대상 가능성', '높음' if violation_count else '낮음'],
+        ['빛 공해 유형', pollution_overall, '기준 초과 추정', f'{violation_count}건'],
         ['간판 탐지 수', f"{signboard_summary.get('count', 0)}건", '간판 평균 밝기',
          f"{signboard_summary.get('averageLuminanceCdM2', '-')} cd/m²"],
         ['간판 중앙값 밝기', signboard_summary.get('medianBrightness', '-'), '최고값 편차',
@@ -1020,7 +1020,7 @@ def _build_pdf_report_bytes(report_data):
     ]
 
     story = [
-        Paragraph('빛 공해 법규 위반 탐지 및 판정 리포트', styles['KrTitle']),
+        Paragraph('빛 공해 기준 비교 참고 리포트', styles['KrTitle']),
         Spacer(1, 4 * mm),
         Paragraph('점주가 확인하기 위한 이미지 기반 참고 리포트', styles['KrBody']),
         Spacer(1, 4 * mm),
@@ -1029,7 +1029,8 @@ def _build_pdf_report_bytes(report_data):
         Paragraph('법규 적용 기준', styles['KrHeading']),
         Paragraph(
             '이 결과는 사진에서 보이는 밝기를 법규 기준과 비교한 참고용 안내입니다. 간판 평균은 같은 사진에서 확인된 간판끼리의 비교값이며, '
-            '법규 기준을 대신하거나 실제 과태료를 확정하지 않습니다. 최종 판단은 현장 측정과 관할 기관의 확인이 필요합니다.',
+            '법규 기준을 대신하거나 실제 처분을 확정하지 않습니다. 실제 절차는 현장 측정과 관할 기관 확인 후 시정명령이 먼저 이루어지며, '
+            '이를 이행하지 않을 때 과태료가 부과될 수 있습니다.',
             styles['KrBody'],
         ),
         Spacer(1, 3 * mm),
@@ -1057,9 +1058,9 @@ def _build_pdf_report_bytes(report_data):
 
     if detected:
         detail_rows = [[
-            '대상', '종류', '밝기 측정값', '기준값', '결과', '예상 과태료'
+            '번호', '대상', '밝기 측정값', '기준값', '위험 수준', '조치 안내'
         ]]
-        for item in detected:
+        for object_number, item in enumerate(detected, start=1):
             unit = item.get('unit') or ('lux' if item.get('type') == '가로등' else 'cd/m²')
             measured_value = item.get('measuredValue')
             if measured_value is None:
@@ -1067,21 +1068,22 @@ def _build_pdf_report_bytes(report_data):
             threshold = item.get('threshold')
             compliance = item.get('compliance') or '미분류'
             stage = item.get('violationStage') or '준수'
-            fine_amount = item.get('fineAmount') or 0
-            object_name = item.get('storeName') or item.get('name') or '조명 대상'
-            result_text = '기준 초과 의심' if compliance == '위반' else compliance
+            object_name = item.get('type') or '조명 대상'
+            risk_level = '위험' if stage == '3단계' else ('주의' if compliance == '위반' else '정상')
+            action_text = '시정명령 대상 가능성 높음*' if compliance == '위반' else '기준 이내 추정'
             detail_rows.append([
+                str(object_number),
                 object_name,
-                item.get('type') or '-',
                 f"{measured_value:.1f} {unit}" if isinstance(measured_value, (int, float)) else f'- {unit}',
                 f"{threshold} {unit}" if threshold not in (None, '') else '-',
-                f'{result_text}{" (" + stage + ")" if stage != "준수" else ""}',
-                f'{fine_amount}만원' if fine_amount else '없음',
+                risk_level,
+                action_text,
             ])
 
         story.extend([
             Paragraph('조명별 확인 결과', styles['KrHeading']),
-            make_table(detail_rows, col_widths=[42 * mm, 24 * mm, 30 * mm, 28 * mm, 32 * mm, 22 * mm], header_fill='#6b4f2a'),
+            make_table(detail_rows, col_widths=[12 * mm, 28 * mm, 30 * mm, 28 * mm, 24 * mm, 48 * mm], header_fill='#6b4f2a'),
+            Paragraph('* 참고: 시정명령 미이행 시 과태료 최대 100만원', styles['KrNote']),
             Spacer(1, 4 * mm),
         ])
     else:
@@ -2192,10 +2194,10 @@ def analyze_api():
         'violationCount':   len(violations),
         'detected':         detected,
         'riskSummary':      (
-            f'GPS 미확인 — 4개 구역 시뮬레이션 (제3종 기준 최대 {total_fine}만원) · 유형: {pollution_summary["overall"]} · cd/m²/lux는 참고용 추정치'
+            f'GPS 미확인 — 구역별 기준 초과 여부 참고 · 유형: {pollution_summary["overall"]} · cd/m²/lux는 이미지 기반 추정치'
             if all_zones_mode else (
-                f'{max_stage} 위반 — 과태료 {total_fine}만원 수준 · 유형: {pollution_summary["overall"]} · cd/m²/lux는 참고용 추정치'
-                if max_stage else f'법규 준수 · 유형: {pollution_summary["overall"]} · cd/m²/lux는 참고용 추정치'
+                f'기준 초과 추정 → 시정명령 대상 가능성 높음 (참고: 미이행 시 과태료 최대 100만원) · 유형: {pollution_summary["overall"]}'
+                if max_stage else f'기준 이내 추정 · 유형: {pollution_summary["overall"]} · cd/m²/lux는 이미지 기반 추정치'
             )
         ),
         'avgBrightness':    int(avg_brightness),
