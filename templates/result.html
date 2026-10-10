@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>분석 결과 - 빛 공해 법규 위반 탐지 시스템</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3K2YyN7M0QZQ4Vv9eRkK6F4c5x4=" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20261006-1" />
 </head>
 <body>
@@ -22,7 +22,8 @@
       <div class="center-title"><p class="eyebrow">결과</p><h1>분석 결과</h1><p class="subtitle">업로드한 이미지 기반 분석 결과입니다. 개선 권장 사항을 확인하세요.</p></div>
       <section class="card result-summary-card">
         <div class="summary-left"><p class="eyebrow">종합 판정</p><h3 id="summaryOverall">종합 판정: -</h3><div id="summaryBadge" class="badge badge-danger">-</div><div class="stat-row"><div><span class="label">시정명령 대상 가능성</span><strong id="summaryViolation">-</strong></div><div><span class="label">기준 초과 추정 객체</span><strong id="summaryConfidence">-</strong></div></div></div>
-        <div class="summary-right"><div><strong>분석 시간</strong><p id="resultTime">00:00</p></div><div><strong>파일명</strong><p id="resultFileName">샘플이미지.jpg</p></div><div class="result-map-panel"><div class="result-map-heading"><strong>조사 위치 지도</strong><span id="resultMapStatus">GPS 확인 중</span></div><div id="resultMap" class="result-map" aria-label="조사 위치와 주변 상점 지도"></div></div><div style="margin-top:10px; font-size:.88rem; color:#2a3a57;"><strong>모델 상태</strong><p id="modelStatus" style="margin:2px 0 0;">-</p><strong>탐지 객체</strong><p id="resultDetected" style="margin:2px 0 0;">-</p><strong>위험 지표</strong><p id="riskSummary" style="margin:2px 0 0;">-</p><strong>조명환경관리구역</strong><p id="resultZone" style="margin:2px 0 0;">-</p><strong>촬영 조건</strong><p id="resultCapture" style="margin:2px 0 0;">-</p></div></div>
+        <div class="summary-right"><div><strong>분석 시간</strong><p id="resultTime">00:00</p></div><div><strong>파일명</strong><p id="resultFileName">샘플이미지.jpg</p></div><div class="summary-meta"><strong>모델 상태</strong><p id="modelStatus">-</p><strong>탐지 객체</strong><p id="resultDetected">-</p><strong>위험 지표</strong><p id="riskSummary">-</p><strong>조명환경관리구역</strong><p id="resultZone">-</p><strong>촬영 조건</strong><p id="resultCapture">-</p></div></div>
+        <div class="result-map-panel"><div class="result-map-heading"><strong>조사 위치 지도</strong><span id="resultMapStatus">GPS 확인 중</span></div><div id="resultMap" class="result-map" aria-label="조사 위치와 주변 상점 지도"></div></div>
       </section>
       <section class="card result-card" id="allZonesSection" style="display:none;"></section>
       <div class="result-grid">
