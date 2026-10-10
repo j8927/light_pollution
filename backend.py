@@ -9,7 +9,46 @@ import math
 import re
 import time
 from datetime import datetime
+
+
+def detect_cpu_limit():
+    """컨테이너(cgroup)에 실제로 할당된 CPU 수를 구한다.
+
+    os.cpu_count()는 Docker/HF Spaces에서 호스트 전체 코어 수를 돌려주므로,
+    그대로 쓰면 torch/OpenMP가 스레드를 과하게 만들어 오히려 느려진다.
+    """
+    override = os.getenv('APP_CPU_THREADS')
+    if override and override.isdigit() and int(override) > 0:
+        return int(override)
+    try:
+        with open('/sys/fs/cgroup/cpu.max') as f:  # cgroup v2
+            quota, period = f.read().split()[:2]
+        if quota != 'max':
+            return max(1, int(int(quota) / int(period)))
+    except (OSError, ValueError):
+        pass
+    try:
+        with open('/sys/fs/cgroup/cpu/cpu.cfs_quota_us') as f:  # cgroup v1
+            quota = int(f.read())
+        with open('/sys/fs/cgroup/cpu/cpu.cfs_period_us') as f:
+            period = int(f.read())
+        if quota > 0:
+            return max(1, int(quota / period))
+    except (OSError, ValueError):
+        pass
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count() or 1
+
+
+CPU_THREADS = detect_cpu_limit()
+# torch가 import되기 전에 설정해야 OpenMP/MKL 스레드 풀에 반영된다.
+for _thread_env in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS'):
+    os.environ.setdefault(_thread_env, str(CPU_THREADS))
+
 import cv2
+cv2.setNumThreads(CPU_THREADS)
 import numpy as np
 from PIL import Image, ImageOps
 from signboard_ocr import crop_signboard_region, recognize_signboard, warm_up_ocr
@@ -47,6 +86,13 @@ load_local_env()
 
 MODEL = None
 MODEL_STATUS = "AI 모델 준비 중"
+
+try:
+    import torch
+    torch.set_num_threads(CPU_THREADS)
+    print(f'CPU threads: {CPU_THREADS} (os.cpu_count={os.cpu_count()})', flush=True)
+except Exception:
+    pass
 
 try:
     from ultralytics import YOLO

@@ -1,6 +1,7 @@
 """Korean signboard OCR and store-name candidate extraction."""
 
 import difflib
+import hashlib
 import os
 import re
 import threading
@@ -12,6 +13,9 @@ import numpy as np
 _OCR_ENGINE = None
 _OCR_ERROR = None
 _OCR_LOCK = threading.Lock()
+# 같은 crop을 다시 분석할 때(재시도·재분석) OCR을 건너뛰기 위한 결과 캐시.
+_RESULT_CACHE = {}
+_RESULT_CACHE_LIMIT = 256
 
 # EasyOCR confidence is frequently low for glowing or stylised Korean lettering.
 # Keep plausible low-confidence lines for candidate ranking, then use geometry and
@@ -339,6 +343,21 @@ def recognize_signboard(rgb_crop):
         empty["ocrStatus"] = _OCR_ERROR or empty["ocrStatus"]
         return empty
 
+    cache_key = hashlib.sha1(
+        np.ascontiguousarray(rgb_crop).tobytes() + str(rgb_crop.shape).encode()
+    ).hexdigest()
+    cached = _RESULT_CACHE.get(cache_key)
+    if cached is not None:
+        return dict(cached)
+    result = _recognize_uncached(engine, rgb_crop, empty)
+    if result["ocrStatus"] in ("success", "no text"):
+        if len(_RESULT_CACHE) >= _RESULT_CACHE_LIMIT:
+            _RESULT_CACHE.pop(next(iter(_RESULT_CACHE)))
+        _RESULT_CACHE[cache_key] = dict(result)
+    return result
+
+
+def _recognize_uncached(engine, rgb_crop, empty):
     primary, glare_reduced = _prepare_variants(rgb_crop)
     try:
         with _OCR_LOCK:
