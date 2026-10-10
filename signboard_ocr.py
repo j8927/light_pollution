@@ -69,6 +69,15 @@ def _get_engine():
     return _OCR_ENGINE
 
 
+def warm_up_ocr():
+    """Load EasyOCR in the background so the first analysis is not slowed down."""
+    if not _enabled():
+        return None
+    thread = threading.Thread(target=_get_engine, name="ocr-warmup", daemon=True)
+    thread.start()
+    return thread
+
+
 def crop_signboard_region(rgb_image, box, padding_x=0.08, padding_y=0.25):
     """Crop a detection with room for brand text placed around its border."""
     if not isinstance(rgb_image, np.ndarray) or rgb_image.size == 0:

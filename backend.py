@@ -12,7 +12,7 @@ from datetime import datetime
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
-from signboard_ocr import crop_signboard_region, recognize_signboard
+from signboard_ocr import crop_signboard_region, recognize_signboard, warm_up_ocr
 import requests as req_lib  # Nominatim 역지오코딩용
 
 app = Flask(__name__)
@@ -60,6 +60,9 @@ try:
 except Exception:
     MODEL = None
     MODEL_STATUS = "AI 모델을 사용할 수 없습니다"
+
+# 첫 분석 요청에서 EasyOCR 로딩 시간이 겹치지 않도록 서버 시작 시 미리 불러온다.
+warm_up_ocr()
 
 # ---- YOLO 탐지 클래스 매핑 ----
 COCO_TO_KR = {

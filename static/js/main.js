@@ -575,7 +575,7 @@ async function callApiAnalyze(imageData, captureSettings = {}) {
     }
     
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 60000);
+    const timeoutId = window.setTimeout(() => controller.abort(), 180000);
     let response;
     try {
       response = await fetch("/api/analyze", {
@@ -601,7 +601,7 @@ async function callApiAnalyze(imageData, captureSettings = {}) {
       totalFineAmount: 0,
       violationCount: 0,
       detected: [],
-      riskSummary: "서버 분석을 완료하지 못했습니다. 잠시 후 다시 시도해주세요.",
+      riskSummary: `서버 분석을 완료하지 못했습니다(${reason}). 잠시 후 다시 시도해주세요.`,
       zone: "제3종",
       zoneLabel: "주거지역",
       gpsDetected: false,
